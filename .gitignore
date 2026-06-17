@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+captures/
+
+# NDK
+.externalNativeBuild/
+.cxx/
+
+# Local SDK config (machine-specific)
+local.properties
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# NOTE: debug.keystore is INTENTIONALLY committed (constant debug signing key).
+# Do not add it here. Likewise the Gradle wrapper (gradlew, gradle-wrapper.jar)
+# must stay committed so CI and clean clones can build.

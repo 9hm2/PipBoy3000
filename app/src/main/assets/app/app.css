@@ -1,0 +1,89 @@
+/* Layout GLUE ONLY. Colors/borders/fonts come from the design system tokens. */
+
+html, body { height: 100%; }
+body { margin: 0; }
+
+#root { height: 100vh; }
+
+/* Make the Screen fill the viewport so the green terminal covers everything.
+   The design system applies .pip-root / .pip-screen / .pip-screen__inner. */
+#root > .pip-screen { height: 100vh; }
+.pip-screen > .pip-screen__inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* respect notches / system bars */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  box-sizing: border-box;
+}
+
+/* App shell: fixed header/tabs, scrollable body */
+.app {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0; /* allow children to shrink so overflow works */
+}
+.app__header { flex: 0 0 auto; }
+.app__tabs { flex: 0 0 auto; }
+.app__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-top: 12px;
+}
+
+/* Vertical stacking of sections with breathing room */
+.stack > * + * { margin-top: 12px; }
+
+/* Scrollable lists (app drawer, call log, contacts) */
+.list-scroll {
+  max-height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* A single tappable row: marker | primary text | meta — used for call log */
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+.row__main { flex: 1 1 auto; min-width: 0; }
+.row__main .ellipsis,
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row__meta { flex: 0 0 auto; }
+.row__marker { flex: 0 0 auto; width: 1.4em; text-align: center; }
+
+/* App drawer row: menu fills, info button sits beside it */
+.app-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.app-row__name { flex: 1 1 auto; min-width: 0; }
+.app-row__info { flex: 0 0 auto; }
+
+/* Two-column grid for RADIO quick-setting buttons */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Modal action stack */
+.modal-actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* Generic key/value text row inside SYSTEM panel */
+.kv { display: flex; justify-content: space-between; gap: 12px; }
+.kv > :last-child { text-align: right; }

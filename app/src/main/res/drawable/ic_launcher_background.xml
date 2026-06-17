@@ -1,0 +1,29 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Solid Pip-Boy near-black base. -->
+    <path
+        android:fillColor="#0B1410"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+
+    <!-- Faint green scanline hints. -->
+    <path
+        android:fillColor="#0A33FF66"
+        android:pathData="M0,30 L108,30 L108,33 L0,33 Z" />
+    <path
+        android:fillColor="#0A33FF66"
+        android:pathData="M0,54 L108,54 L108,57 L0,57 Z" />
+    <path
+        android:fillColor="#0A33FF66"
+        android:pathData="M0,78 L108,78 L108,81 L0,81 Z" />
+
+    <!-- Darker vignette ring drawn over the edges. -->
+    <path
+        android:strokeColor="#400B1410"
+        android:strokeWidth="22"
+        android:fillColor="#00000000"
+        android:pathData="M-11,54 a65,65 0 1,0 130,0 a65,65 0 1,0 -130,0" />
+</vector>

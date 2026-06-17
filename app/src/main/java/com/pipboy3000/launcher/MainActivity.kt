@@ -1,0 +1,201 @@
+package com.pipboy3000.launcher
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.graphics.Color
+import android.os.Bundle
+import android.view.ViewGroup
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.WindowCompat
+import androidx.webkit.WebViewAssetLoader
+import com.pipboy3000.launcher.bridge.LauncherBridge
+
+/**
+ * Host shell for the Pip-Boy 3000 launcher.
+ *
+ * Responsibilities:
+ *  - Hosts a full-screen WebView that renders the bundled Pip-Boy web UI.
+ *  - Serves the bundled web assets over a safe https origin via WebViewAssetLoader.
+ *  - Constructs + registers the native bridge (Agent B) as "AndroidBridge".
+ *  - Handles runtime permissions, edge-to-edge layout, and launcher lifecycle.
+ *
+ * The web UI is the single source of truth for presentation; this class only
+ * wires plumbing and pokes the web app with a "pipboy:refresh" DOM event whenever
+ * native-visible state may have changed (page load, resume, HOME re-press, perms).
+ */
+class MainActivity : ComponentActivity() {
+
+    private lateinit var webView: WebView
+
+    /** Pip-Boy background green-black; matches the web UI so there's no white flash. */
+    private val pipBoyBg = 0xFF0B1410.toInt()
+
+    /** Origin our asset loader serves from. Anything else stays out / is treated as external. */
+    private val appOrigin = "https://appassets.androidplatform.net"
+    private val indexUrl = "$appOrigin/assets/index.html"
+
+    /**
+     * Core permissions the DATA/STAT tabs rely on. We never auto-spam these on launch;
+     * the web UI triggers the request through AndroidBridge.requestPermissions().
+     */
+    private val corePermissions = arrayOf(
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.CALL_PHONE,
+        Manifest.permission.READ_PHONE_STATE,
+    )
+
+    /**
+     * Registered at field-init time (required by the Activity Result API contract —
+     * must be created before the activity is STARTED). On any result we just nudge the
+     * web app to re-query getPermissions()/data; we don't care which were granted here.
+     */
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            dispatchRefresh()
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // --- Edge-to-edge: full-screen launcher. The web UI handles safe areas via
+        // CSS env(safe-area-inset-*); we only need transparent system bars and to let
+        // content draw under them. We do NOT permanently hide the status bar.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+
+        webView = createWebView()
+        setContentView(webView)
+
+        // Construct + register the bridge BEFORE loadUrl so the JS interface exists
+        // by the time the page's scripts run. The lambda is the web-triggered
+        // permission entry point.
+        webView.addJavascriptInterface(
+            LauncherBridge(this) { requestCorePermissions() },
+            "AndroidBridge",
+        )
+
+        webView.loadUrl(indexUrl)
+
+        // Launcher back behaviour: never drop the user to a black screen. Walk the
+        // WebView history if possible; otherwise consume the press (stay on launcher).
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                }
+                // else: no-op. As HOME, there's nowhere to "back out" to.
+            }
+        })
+    }
+
+    private fun createWebView(): WebView {
+        // Serve bundled assets over https://appassets.androidplatform.net/assets/.
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        return WebView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            setBackgroundColor(pipBoyBg)
+
+            settings.apply {
+                javaScriptEnabled = true
+                domStorageEnabled = true
+                // Assets come exclusively through the asset loader; deny raw file/content access.
+                allowFileAccess = false
+                allowContentAccess = false
+                cacheMode = WebSettings.LOAD_DEFAULT
+                mediaPlaybackRequiresUserGesture = false
+                // Keep the terminal layout exact regardless of system font scaling.
+                textZoom = 100
+                setSupportZoom(false)
+                builtInZoomControls = false
+                displayZoomControls = false
+            }
+
+            webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): WebResourceResponse? {
+                    // Delegate every request to the asset loader; it returns null for
+                    // anything outside /assets/, letting the WebView handle it normally.
+                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): Boolean {
+                    // Keep navigation pinned to our own origin. Block anything else
+                    // (the UI should route external intents through the bridge, not links).
+                    return request.url.toString().startsWith(appOrigin).not()
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    super.onPageFinished(view, url)
+                    dispatchRefresh()
+                }
+            }
+        }.also {
+            // WebView contents debugging only in debuggable builds.
+            if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                WebView.setWebContentsDebuggingEnabled(true)
+            }
+        }
+    }
+
+    /** Passed to LauncherBridge; the web UI calls this via AndroidBridge.requestPermissions(). */
+    private fun requestCorePermissions() {
+        permissionLauncher.launch(corePermissions)
+    }
+
+    /**
+     * Tell the web app that native-visible state may have changed so it re-queries
+     * permissions/data/battery/clock. Safe to call before the page is fully ready —
+     * the listener simply may not exist yet (onPageFinished covers the initial load).
+     */
+    private fun dispatchRefresh() {
+        if (::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "window.dispatchEvent(new Event('pipboy:refresh'));",
+                null,
+            )
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Battery / clock / app list may have changed while we were away.
+        dispatchRefresh()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // singleTask: pressing HOME while already here re-delivers the intent.
+        // At minimum refresh; the web UI may reset to its main tab on this event.
+        setIntent(intent)
+        dispatchRefresh()
+    }
+
+    override fun onDestroy() {
+        // Detach from the view tree before destroying to avoid leaks / crashes.
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.removeAllViews()
+        webView.destroy()
+        super.onDestroy()
+    }
+}

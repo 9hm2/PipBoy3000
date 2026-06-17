@@ -1,5 +1,5 @@
 <resources>
-    <!-- Mirrors --pip-bg / --pip-green from the Pip-Boy design tokens. -->
+    <!-- Mirrors the pip-bg / pip-green Pip-Boy design tokens. -->
     <color name="pip_bg">#FF0B1410</color>
     <color name="pip_green">#FF33FF66</color>
 </resources>
