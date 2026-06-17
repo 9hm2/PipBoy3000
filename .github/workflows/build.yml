@@ -8,6 +8,9 @@
 # that key travels with the repo, the build needs NO signing secrets and the
 # produced APK has a stable, reproducible signature. This is a debug key, not a
 # production signing key.
+#
+# Re-index trigger: this workflow is registered by GitHub when a commit lands on
+# the default branch after Actions is enabled.
 name: Build
 
 on:
