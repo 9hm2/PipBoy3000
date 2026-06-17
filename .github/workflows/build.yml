@@ -27,6 +27,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Needed so the built-in GITHUB_TOKEN can create a Release and upload the APK.
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,3 +61,18 @@ jobs:
           name: pipboy3000-${{ inputs.build_type }}-apk
           path: app/build/outputs/apk/${{ inputs.build_type }}/*.apk
           if-no-files-found: error
+
+      # Publish the APK to the repository's Releases page (one release per run).
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: PIP-BOY 3000 — ${{ inputs.build_type }} build #${{ github.run_number }}
+          body: |
+            Automated ${{ inputs.build_type }} build of PIP-BOY 3000.
+
+            - Commit: ${{ github.sha }}
+            - Signed with the constant committed debug key (not a production key).
+            - Install with: `adb install -r <apk>`
+          files: app/build/outputs/apk/${{ inputs.build_type }}/*.apk
+          fail_on_unmatched_files: true
