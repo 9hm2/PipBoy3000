@@ -1,0 +1,10 @@
+<resources>
+    <!-- Bare splash/window theme: edge-to-edge, near-black Pip-Boy background.
+         All real styling is done in Compose. -->
+    <style name="Theme.PipBoy3000" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/pip_bg</item>
+        <item name="android:statusBarColor">@color/pip_bg</item>
+        <item name="android:navigationBarColor">@color/pip_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
