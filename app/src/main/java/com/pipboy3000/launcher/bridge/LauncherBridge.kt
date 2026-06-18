@@ -298,6 +298,7 @@ class LauncherBridge(
                 android.provider.Telephony.Sms.DATE,
                 android.provider.Telephony.Sms.TYPE,
                 android.provider.Telephony.Sms.READ,
+                android.provider.Telephony.Sms.THREAD_ID,
             )
             activity.contentResolver.query(
                 android.provider.Telephony.Sms.CONTENT_URI,
@@ -305,6 +306,71 @@ class LauncherBridge(
                 null,
                 null,
                 android.provider.Telephony.Sms.DATE + " DESC",
+            )?.use { c ->
+                val addrIdx = c.getColumnIndex(android.provider.Telephony.Sms.ADDRESS)
+                val bodyIdx = c.getColumnIndex(android.provider.Telephony.Sms.BODY)
+                val dateIdx = c.getColumnIndex(android.provider.Telephony.Sms.DATE)
+                val typeIdx = c.getColumnIndex(android.provider.Telephony.Sms.TYPE)
+                val readIdx = c.getColumnIndex(android.provider.Telephony.Sms.READ)
+                val threadIdx = c.getColumnIndex(android.provider.Telephony.Sms.THREAD_ID)
+                // One row per conversation thread: keep only the newest message
+                // of each thread for the list view.
+                val seenThreads = HashSet<Long>()
+                var count = 0
+                while (c.moveToNext() && count < clamped) {
+                    val address = if (addrIdx >= 0) c.getString(addrIdx) ?: "" else ""
+                    val body = if (bodyIdx >= 0) c.getString(bodyIdx) ?: "" else ""
+                    val date = if (dateIdx >= 0) c.getLong(dateIdx) else 0L
+                    val type = if (typeIdx >= 0) c.getInt(typeIdx) else -1
+                    val read = if (readIdx >= 0) c.getInt(readIdx) != 0 else true
+                    val threadId = if (threadIdx >= 0) c.getLong(threadIdx) else -1L
+                    if (threadId >= 0 && !seenThreads.add(threadId)) continue
+                    arr.put(
+                        JSONObject()
+                            .put("address", address)
+                            .put("name", lookupContactName(address, nameCache))
+                            .put("body", body)
+                            .put("date", date)
+                            .put("type", smsTypeName(type))
+                            .put("read", read)
+                            .put("threadId", threadId)
+                    )
+                    count++
+                }
+            }
+            arr.toString()
+        } catch (e: SecurityException) {
+            "[]"
+        } catch (e: Exception) {
+            "[]"
+        }
+    }
+
+    /**
+     * All messages in one SMS conversation [threadId], oldest first (for the
+     * in-app reader). Each: {"address","name","body","date","type","read"}.
+     * Requires READ_SMS; "[]" if denied.
+     */
+    @JavascriptInterface
+    fun getSmsThread(threadId: String, limit: Int): String {
+        if (!hasPermission(android.Manifest.permission.READ_SMS)) return "[]"
+        val clamped = limit.coerceIn(1, 2000)
+        return try {
+            val arr = JSONArray()
+            val nameCache = HashMap<String, String>()
+            val projection = arrayOf(
+                android.provider.Telephony.Sms.ADDRESS,
+                android.provider.Telephony.Sms.BODY,
+                android.provider.Telephony.Sms.DATE,
+                android.provider.Telephony.Sms.TYPE,
+                android.provider.Telephony.Sms.READ,
+            )
+            activity.contentResolver.query(
+                android.provider.Telephony.Sms.CONTENT_URI,
+                projection,
+                android.provider.Telephony.Sms.THREAD_ID + " = ?",
+                arrayOf(threadId),
+                android.provider.Telephony.Sms.DATE + " ASC",
             )?.use { c ->
                 val addrIdx = c.getColumnIndex(android.provider.Telephony.Sms.ADDRESS)
                 val bodyIdx = c.getColumnIndex(android.provider.Telephony.Sms.BODY)
