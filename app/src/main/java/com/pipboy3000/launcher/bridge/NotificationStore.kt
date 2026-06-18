@@ -43,6 +43,41 @@ object NotificationStore {
     @Volatile
     private var service: WeakReference<PipNotificationListener>? = null
 
+    /**
+     * Optional listener invoked with the JSON of a freshly POSTED notification.
+     * The host activity sets this only while it is in the foreground, so new
+     * notifications can be surfaced as in-launcher popups. Receives one item's
+     * JSON object string.
+     */
+    @Volatile
+    private var postedListener: ((String) -> Unit)? = null
+
+    /** Set/clear the foreground "new notification" listener (host activity). */
+    fun setPostedListener(l: ((String) -> Unit)?) {
+        postedListener = l
+    }
+
+    /** Serialize one item to a JSON object string (shared by update/notifyPosted). */
+    private fun itemJson(item: Item): JSONObject =
+        JSONObject()
+            .put("key", item.key)
+            .put("packageName", item.packageName)
+            .put("appLabel", item.appLabel)
+            .put("title", item.title)
+            .put("text", item.text)
+            .put("time", item.time)
+            .put("clearable", item.clearable)
+
+    /** Called by the service when a NEW notification is posted (foreground popup). */
+    fun notifyPosted(item: Item) {
+        try {
+            val l = postedListener ?: return
+            l.invoke(itemJson(item).toString())
+        } catch (e: Throwable) {
+            // swallow
+        }
+    }
+
     // ---------------------------------------------------------------------
     // Service-facing API
     // ---------------------------------------------------------------------
@@ -77,16 +112,7 @@ object NotificationStore {
             val freshIntents = HashMap<String, PendingIntent>()
             for (item in items) {
                 try {
-                    arr.put(
-                        JSONObject()
-                            .put("key", item.key)
-                            .put("packageName", item.packageName)
-                            .put("appLabel", item.appLabel)
-                            .put("title", item.title)
-                            .put("text", item.text)
-                            .put("time", item.time)
-                            .put("clearable", item.clearable)
-                    )
+                    arr.put(itemJson(item))
                     item.contentIntent?.let { freshIntents[item.key] = it }
                 } catch (e: Throwable) {
                     // skip a malformed item, keep the rest

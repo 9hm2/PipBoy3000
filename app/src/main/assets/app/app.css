@@ -130,10 +130,13 @@ html, body, #root {
   cursor: pointer;
   text-align: right;
 }
-/* Vitals chips wrap gracefully rather than forcing horizontal overflow. */
-.sysbar__vitals .pip-status-bar {
+/* Vitals chips wrap gracefully rather than forcing horizontal overflow.
+   (DS class is .pip-statusbar — no hyphen.) Tighten the large default gap so
+   BAT/SIG/NET/NOTIF stay compact instead of spreading over three tall rows. */
+.sysbar__vitals .pip-statusbar {
   justify-content: flex-end;
   flex-wrap: wrap;
+  gap: 4px 14px;
 }
 
 /* Shared list rows (apps / contacts / call log / notifications) */
@@ -225,5 +228,169 @@ html, body, #root {
 @media (max-width: 340px) {
   .sysbar { justify-content: center; }
   .sysbar__vitals { text-align: center; flex-basis: 100%; }
-  .sysbar__vitals .pip-status-bar { justify-content: center; }
+  .sysbar__vitals .pip-statusbar { justify-content: center; }
+}
+
+/* --------------------------------------------------------------- TERMINAL ---
+   Fills the locked body: the scrollback Section grows and is the ONLY scroll
+   region (the page stays pinned — see .app__body). The input row + quick chips
+   + hint are pinned beneath it. The whole column never scrolls as a unit. */
+.term {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* Fill the scrollable body so the scrollback can flex-grow to the bottom. */
+  height: 100%;
+}
+.term__panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The Panel body wrapper grows to fill the Panel and lets its child shrink so
+   the inner scroll region — not the page — is what scrolls. */
+.term__panel .pip-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The inner scroll region — only this scrolls. */
+.term__scroll {
+  min-height: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.term__lines {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.term__line {
+  font-family: var(--pip-font-mono, ui-monospace, monospace);
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.term__line--cmd { margin-top: 6px; }
+.term__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.term__inputrow {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.term__input { flex: 1 1 auto; min-width: 0; }
+.term__inputrow > .pip-button,
+.term__inputrow > button { flex: 0 0 auto; }
+.term__hint { margin-top: 8px; }
+
+/* -------------------------------------------------- notification popups -----
+   Fixed top overlay layer above .app, below the Modal (z 1000). The layer is
+   click-through; only the cards capture taps. Respects the top safe-area. */
+.notif-pop-layer {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 0;
+  right: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 0;
+  pointer-events: none;
+}
+.notif-pop {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 480px;
+}
+.notif-pop__panel { position: relative; }
+.notif-pop__card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  /* Leave room for the ✕ button in the top-right. */
+  padding-right: 28px;
+}
+.notif-pop__tag { letter-spacing: 0.08em; }
+.notif-pop__title { margin-top: 2px; }
+.notif-pop__text {
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.notif-pop__close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+
+@media (max-height: 520px) {
+  .term__scroll { max-height: 38vh; }
+}
+
+/* ---------------------------------------------------------------- tabs fit ---
+   The DS lays tabs in a non-wrapping row with wide padding + wide tracking, so
+   4-5 main tabs (and the 4 DATA sub-tabs) overflow and get clipped ("RADI",
+   "N"). Make every tab an equal flex column that shrinks to fit the width,
+   single-line with ellipsis as a last resort. Applies to all .pip-tabs rows. */
+.pip-tabs {
+  width: 100%;
+  gap: 2px;
+}
+.pip-tabs__tab {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-left: var(--pip-space-2);
+  padding-right: var(--pip-space-2);
+  letter-spacing: 0.02em;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--pip-fs-sm);
+}
+@media (max-width: 380px) {
+  .pip-tabs__tab {
+    font-size: var(--pip-fs-xs);
+    letter-spacing: 0;
+    padding-left: var(--pip-space-1);
+    padding-right: var(--pip-space-1);
+  }
+}
+
+/* --------------------------------------------------------- uniform tiles -----
+   Shortcut/quick-setting buttons must be equal-sized tiles with text that fits
+   on one line — no more ragged heights or wrapped/clipped labels. Equal rows
+   via grid-auto-rows:1fr; each button fills its cell and never wraps. */
+.grid-3 { grid-auto-rows: 1fr; align-items: stretch; }
+.grid-3 > * { display: flex; }
+.grid-3 .pip-btn,
+.grid-3 button {
+  width: 100%;
+  min-height: 44px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: var(--pip-tracking);
+  padding-left: var(--pip-space-2);
+  padding-right: var(--pip-space-2);
 }

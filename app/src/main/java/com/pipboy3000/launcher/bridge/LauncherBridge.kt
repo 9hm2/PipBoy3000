@@ -412,6 +412,70 @@ class LauncherBridge(
     }
 
     // ---------------------------------------------------------------------
+    // Terminal
+    // ---------------------------------------------------------------------
+
+    /**
+     * Run a shell command (`sh -c <cmd>`) for the built-in terminal and return
+     * its result as JSON: {"cmd","stdout","stderr","exit","truncated"}.
+     * Non-root — many commands are permission-limited; that's expected. Output
+     * is capped and the process is killed after a timeout so the UI can't hang.
+     * This runs on the JS binder thread (not the UI thread), so blocking is fine.
+     */
+    @JavascriptInterface
+    fun runCommand(cmd: String): String {
+        val maxBytes = 64 * 1024
+        val timeoutMs = 8000L
+        return try {
+            val process = ProcessBuilder("sh", "-c", cmd).redirectErrorStream(false).start()
+            val out = StringBuilder()
+            val err = StringBuilder()
+            val tOut = Thread { drain(process.inputStream, out, maxBytes) }
+            val tErr = Thread { drain(process.errorStream, err, maxBytes) }
+            tOut.start(); tErr.start()
+            val finished = process.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            if (!finished) {
+                process.destroy()
+            }
+            tOut.join(500); tErr.join(500)
+            val exit = if (finished) process.exitValue() else -1
+            val truncated = out.length >= maxBytes || err.length >= maxBytes
+            JSONObject()
+                .put("cmd", cmd)
+                .put("stdout", out.toString())
+                .put("stderr", if (!finished) (err.toString() + "\n[timed out]") else err.toString())
+                .put("exit", exit)
+                .put("truncated", truncated)
+                .toString()
+        } catch (e: Exception) {
+            JSONObject()
+                .put("cmd", cmd)
+                .put("stdout", "")
+                .put("stderr", (e.message ?: "error"))
+                .put("exit", -1)
+                .put("truncated", false)
+                .toString()
+        }
+    }
+
+    /** Read a stream into [sink] up to [maxBytes] characters. */
+    private fun drain(stream: java.io.InputStream, sink: StringBuilder, maxBytes: Int) {
+        try {
+            val reader = stream.bufferedReader()
+            val buf = CharArray(4096)
+            while (true) {
+                val n = reader.read(buf)
+                if (n < 0) break
+                if (sink.length < maxBytes) {
+                    sink.append(buf, 0, minOf(n, maxBytes - sink.length))
+                }
+            }
+        } catch (e: Exception) {
+            // swallow — partial output is fine
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Dialer / calls
     // ---------------------------------------------------------------------
 

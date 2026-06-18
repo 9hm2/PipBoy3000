@@ -174,6 +174,10 @@
   function vibrate(ms) {
     callBool("vibrate", [ms]);
   }
+  // Guarded shell exec. Returns {cmd,stdout,stderr,exit,truncated} or null.
+  function runCommand(cmd) {
+    return callJson("runCommand", [cmd], null);
+  }
 
   /* ------------------------------------------------------------- storage */
   function lsGet(key, fallback) {
@@ -1131,12 +1135,12 @@
     ];
 
     var settingsShortcuts = [
-      ["WI-FI", "wifi"],
+      ["WIFI", "wifi"],
       ["BLUETOOTH", "bluetooth"],
       ["LOCATION", "location"],
       ["DISPLAY", "display"],
       ["SOUND", "sound"],
-      ["DATE & TIME", "date"],
+      ["DATE", "date"],
       ["BATTERY", "battery"],
       ["STORAGE", "storage"],
       ["APPS", "apps"],
@@ -1246,6 +1250,382 @@
           openNotificationAccessSettings
         )
       )
+    );
+  }
+
+  /* ============================================================= TERM screen */
+  // A Pip-Boy shell. Scrollback (the inner scroll region) + a pinned input row.
+  // Output is a capped, in-memory line buffer; command history is ArrowUp/Down.
+  var TERM_MAX_LINES = 300;
+  var TERM_QUICK = ["getprop", "ps", "ls /sdcard", "ip addr", "uptime"];
+
+  function TerminalScreen(props) {
+    var noBridge = props.noBridge;
+
+    // Scrollback lines: { id, kind:"cmd"|"out"|"err"|"exit", text }.
+    var linesState = useState([]);
+    var lines = linesState[0], setLines = linesState[1];
+    var inputState = useState("");
+    var inputVal = inputState[0], setInputVal = inputState[1];
+
+    var scrollRef = useRef(null);
+    var idRef = useRef(0);
+    var cmdHistRef = useRef([]); // entered commands (oldest..newest)
+    var histPosRef = useRef(-1); // -1 = not navigating
+
+    // Append lines, keeping only the last TERM_MAX_LINES.
+    var pushLines = useCallback(function (items) {
+      setLines(function (prev) {
+        var next = prev.concat(items);
+        if (next.length > TERM_MAX_LINES) {
+          next = next.slice(next.length - TERM_MAX_LINES);
+        }
+        return next;
+      });
+    }, []);
+
+    function nextId() {
+      idRef.current += 1;
+      return idRef.current;
+    }
+
+    // Turn a stdout/stderr blob into per-line entries (preserve blank lines).
+    function blockToLines(text, kind) {
+      var out = [];
+      if (text == null || text === "") return out;
+      var parts = String(text).split("\n");
+      // Drop a single trailing empty line from a final newline.
+      if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+      for (var i = 0; i < parts.length; i++) {
+        out.push({ id: nextId(), kind: kind, text: parts[i] });
+      }
+      return out;
+    }
+
+    var runCmd = useCallback(
+      function (cmd) {
+        var trimmed = (cmd || "").trim();
+        if (!trimmed) return;
+        if (!hasBridge()) return;
+
+        var hist = cmdHistRef.current;
+        if (hist.length === 0 || hist[hist.length - 1] !== trimmed) {
+          hist.push(trimmed);
+          if (hist.length > 100) hist.shift();
+        }
+        histPosRef.current = -1;
+
+        var batch = [{ id: nextId(), kind: "cmd", text: trimmed }];
+        var res = runCommand(trimmed);
+        if (!res) {
+          batch = batch.concat(blockToLines("(no response from host)", "err"));
+        } else {
+          batch = batch.concat(blockToLines(res.stdout, "out"));
+          batch = batch.concat(blockToLines(res.stderr, "err"));
+          if (res.truncated) {
+            batch.push({ id: nextId(), kind: "exit", text: "[output truncated]" });
+          }
+          var ex = Number(res.exit);
+          if (ex) {
+            batch.push({ id: nextId(), kind: "exit", text: "[exit " + ex + "]" });
+          }
+        }
+        pushLines(batch);
+      },
+      [pushLines]
+    );
+
+    function submit() {
+      var cmd = inputVal;
+      setInputVal("");
+      runCmd(cmd);
+    }
+
+    function onKeyDown(e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        submit();
+        return;
+      }
+      var hist = cmdHistRef.current;
+      if (e.key === "ArrowUp") {
+        if (hist.length === 0) return;
+        e.preventDefault();
+        var pUp = histPosRef.current;
+        pUp = pUp === -1 ? hist.length - 1 : Math.max(0, pUp - 1);
+        histPosRef.current = pUp;
+        setInputVal(hist[pUp]);
+      } else if (e.key === "ArrowDown") {
+        if (hist.length === 0 || histPosRef.current === -1) return;
+        e.preventDefault();
+        var pDn = histPosRef.current + 1;
+        if (pDn >= hist.length) {
+          histPosRef.current = -1;
+          setInputVal("");
+        } else {
+          histPosRef.current = pDn;
+          setInputVal(hist[pDn]);
+        }
+      }
+    }
+
+    // Auto-scroll the scrollback to the bottom after each output change.
+    useEffect(
+      function () {
+        var el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      },
+      [lines]
+    );
+
+    function lineNode(ln) {
+      if (ln.kind === "cmd") {
+        return h(
+          Text,
+          { key: ln.id, as: "div", variant: "bright", size: "sm", className: "term__line term__line--cmd" },
+          "> " + ln.text
+        );
+      }
+      if (ln.kind === "err") {
+        return h(
+          Text,
+          {
+            key: ln.id,
+            as: "div",
+            size: "sm",
+            className: "term__line",
+            style: { color: "var(--pip-amber)" },
+          },
+          ln.text === "" ? " " : ln.text
+        );
+      }
+      if (ln.kind === "exit") {
+        return h(
+          Text,
+          { key: ln.id, as: "div", variant: "dim", size: "xs", className: "term__line" },
+          ln.text
+        );
+      }
+      // out
+      return h(
+        Text,
+        { key: ln.id, as: "div", variant: "body", size: "sm", className: "term__line" },
+        ln.text === "" ? " " : ln.text
+      );
+    }
+
+    var scrollbackBody;
+    if (noBridge) {
+      scrollbackBody = h(Text, { variant: "dim" }, "OFFLINE PREVIEW — shell unavailable without host bridge.");
+    } else if (lines.length === 0) {
+      scrollbackBody = h(
+        Text,
+        { variant: "dim" },
+        "Pip-Boy shell ready. Enter a command or tap a quick action below."
+      );
+    } else {
+      scrollbackBody = h("div", { className: "term__lines" }, lines.map(lineNode));
+    }
+
+    return h(
+      "div",
+      { className: "term" },
+      h(
+        Section,
+        { title: "TERMINAL", className: "term__panel" },
+        h("div", { className: "term__scroll", ref: scrollRef }, scrollbackBody)
+      ),
+      h(
+        "div",
+        { className: "term__quick" },
+        TERM_QUICK.map(function (qc) {
+          return h(
+            Button,
+            {
+              key: qc,
+              variant: "ghost",
+              glow: false,
+              onClick: act(function () {
+                runCmd(qc);
+              }),
+            },
+            qc
+          );
+        })
+      ),
+      h(
+        "div",
+        { className: "term__inputrow" },
+        h(Input, {
+          className: "term__input",
+          placeholder: noBridge ? "shell offline" : "enter command…",
+          value: inputVal,
+          disabled: noBridge,
+          onKeyDown: onKeyDown,
+          onChange: function (e) {
+            histPosRef.current = -1;
+            setInputVal(e.target.value);
+          },
+        }),
+        h(
+          Button,
+          {
+            variant: "primary",
+            glow: false,
+            onClick: act(function () {
+              submit();
+            }),
+          },
+          "RUN"
+        )
+      ),
+      h(
+        Text,
+        { as: "div", variant: "dim", size: "xs", className: "term__hint" },
+        "Non-root shell. Some commands are restricted."
+      )
+    );
+  }
+
+  /* ====================================================== notification popups */
+  // A fixed top overlay that stacks transient "incoming transmission" cards.
+  var NOTIF_POP_MAX = 3;
+  var NOTIF_POP_TTL = 5000;
+
+  function NotifPopups(props) {
+    var onOpen = props.onOpen;
+
+    var popsState = useState([]); // [{key, appLabel, title, text}]
+    var pops = popsState[0], setPops = popsState[1];
+    var timersRef = useRef({}); // key -> timeout id
+
+    var remove = useCallback(function (key) {
+      setPops(function (prev) {
+        return prev.filter(function (p) {
+          return p.key !== key;
+        });
+      });
+      var t = timersRef.current[key];
+      if (t) {
+        clearTimeout(t);
+        delete timersRef.current[key];
+      }
+    }, []);
+
+    var arm = useCallback(
+      function (key) {
+        var existing = timersRef.current[key];
+        if (existing) clearTimeout(existing);
+        timersRef.current[key] = setTimeout(function () {
+          remove(key);
+        }, NOTIF_POP_TTL);
+      },
+      [remove]
+    );
+
+    useEffect(
+      function () {
+        function onNotify(e) {
+          var detail = e.detail;
+          if (typeof detail === "string") {
+            detail = parseJson(detail, null);
+          }
+          if (!detail) return;
+          var key = detail.key != null ? String(detail.key) : "n" + Date.now();
+          var card = {
+            key: key,
+            appLabel: (detail.appLabel || detail.packageName || "TRANSMISSION").toString(),
+            title: detail.title || "",
+            text: detail.text || "",
+          };
+          setPops(function (prev) {
+            var exists = false;
+            var next = prev.map(function (p) {
+              if (p.key === key) {
+                exists = true;
+                return card; // refresh contents
+              }
+              return p;
+            });
+            if (!exists) {
+              next = next.concat([card]);
+              if (next.length > NOTIF_POP_MAX) {
+                var dropped = next.slice(0, next.length - NOTIF_POP_MAX);
+                next = next.slice(next.length - NOTIF_POP_MAX);
+                dropped.forEach(function (d) {
+                  var dt = timersRef.current[d.key];
+                  if (dt) {
+                    clearTimeout(dt);
+                    delete timersRef.current[d.key];
+                  }
+                });
+              }
+            }
+            return next;
+          });
+          arm(key);
+        }
+        window.addEventListener("pipboy:notify", onNotify);
+        return function () {
+          window.removeEventListener("pipboy:notify", onNotify);
+          var timers = timersRef.current;
+          for (var k in timers) {
+            if (timers.hasOwnProperty(k)) clearTimeout(timers[k]);
+          }
+          timersRef.current = {};
+        };
+      },
+      [arm, remove]
+    );
+
+    if (!pops.length) return null;
+
+    return h(
+      "div",
+      { className: "notif-pop-layer" },
+      pops.map(function (p) {
+        return h(
+          "div",
+          { key: p.key, className: "notif-pop" },
+          h(
+            Panel,
+            { title: (p.appLabel || "").toUpperCase(), className: "notif-pop__panel" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "notif-pop__card",
+                onClick: act(function () {
+                  onOpen(p.key);
+                  remove(p.key);
+                }),
+              },
+              h(Text, { as: "div", variant: "dim", size: "xs", className: "notif-pop__tag" }, "INCOMING TRANSMISSION"),
+              p.title
+                ? h(Text, { as: "div", variant: "bright", size: "sm", className: "notif-pop__title ellipsis" }, p.title)
+                : null,
+              p.text
+                ? h(Text, { as: "div", variant: "dim", size: "xs", className: "notif-pop__text" }, p.text)
+                : null
+            ),
+            h(
+              "div",
+              { className: "notif-pop__close" },
+              h(
+                Button,
+                {
+                  variant: "ghost",
+                  glow: false,
+                  onClick: act(function () {
+                    remove(p.key);
+                  }),
+                },
+                "✕"
+              )
+            )
+          )
+        );
+      })
     );
   }
 
@@ -1527,6 +1907,7 @@
     var mainTabs = [
       { id: "apps", label: "APPS" },
       { id: "data", label: "DATA" },
+      { id: "term", label: "TERM" },
       { id: "stat", label: "STAT" },
       { id: "radio", label: "RADIO" },
     ];
@@ -1544,6 +1925,8 @@
         setDataTab: dataTabState[1],
         onDismiss: dismissAndRefresh,
       });
+    } else if (tab === "term") {
+      body = h(TerminalScreen, { noBridge: !hasBridge() });
     } else if (tab === "stat") {
       body = h(StatScreen, { stats: stats, net: net, audio: audio, display: display });
     } else if (tab === "radio") {
@@ -1687,6 +2070,7 @@
         ),
         h("div", { className: "app__body" }, body)
       ),
+      h(NotifPopups, { onOpen: openNotification }),
       modal
     );
   }

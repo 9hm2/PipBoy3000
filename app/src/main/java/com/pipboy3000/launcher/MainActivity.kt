@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -19,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import com.pipboy3000.launcher.bridge.LauncherBridge
+import com.pipboy3000.launcher.bridge.NotificationStore
 
 /**
  * Host shell for the Pip-Boy 3000 launcher.
@@ -110,7 +113,24 @@ class MainActivity : ComponentActivity() {
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
             .build()
 
-        return WebView(this).apply {
+        // WebView subclass that advertises the Pip-Boy palette to a co-operating
+        // keyboard (pcKeyboard) via EditorInfo.extras, so the IME recolours to
+        // match the launcher whenever it opens over one of our input fields.
+        val web = object : WebView(this) {
+            override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+                val ic = super.onCreateInputConnection(outAttrs)
+                try {
+                    val extras = outAttrs.extras ?: android.os.Bundle().also { outAttrs.extras = it }
+                    // ARGB ints; pcKeyboard derives a full theme from bg + fg.
+                    extras.putInt("com.pckeyboard.ime.theme.BACKGROUND", 0xFF0B1410.toInt())
+                    extras.putInt("com.pckeyboard.ime.theme.FOREGROUND", 0xFF33FF66.toInt())
+                } catch (e: Exception) {
+                    // best-effort — keyboard theming is optional
+                }
+                return ic
+            }
+        }
+        return web.apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -205,6 +225,26 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // Battery / clock / app list may have changed while we were away.
         dispatchRefresh()
+        // Only show in-launcher notification popups while we are foreground.
+        NotificationStore.setPostedListener { json ->
+            runOnUiThread { dispatchNotify(json) }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Stop receiving popup pushes when we're not the foreground app.
+        NotificationStore.setPostedListener(null)
+    }
+
+    /** Push a freshly posted notification (JSON object) to the web UI as a popup. */
+    private fun dispatchNotify(json: String) {
+        if (::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('pipboy:notify',{detail:$json}));",
+                null,
+            )
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

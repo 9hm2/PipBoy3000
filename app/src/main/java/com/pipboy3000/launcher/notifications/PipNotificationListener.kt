@@ -37,6 +37,12 @@ class PipNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         try {
             refresh()
+            // Surface the newly posted notification as an in-launcher popup
+            // (only acted on while the launcher is foreground; see the host).
+            val item = toItem(sbn)
+            if (item != null && (item.title.isNotEmpty() || item.text.isNotEmpty())) {
+                NotificationStore.notifyPosted(item)
+            }
         } catch (e: Throwable) {
             // swallow
         }
