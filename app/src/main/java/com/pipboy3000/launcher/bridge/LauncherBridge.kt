@@ -585,6 +585,25 @@ class LauncherBridge(
     @JavascriptInterface
     fun openAccessibilitySettings(): Boolean = startSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS)
 
+    /**
+     * Open THIS app's "App info" page. On sideloaded builds (Android 13+),
+     * sensitive toggles (accessibility / notification access) are "restricted"
+     * until the user taps the overflow menu here and chooses
+     * "Allow restricted settings".
+     */
+    @JavascriptInterface
+    fun openAppDetails(): Boolean {
+        return try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${activity.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /** True if our Recents-redirect accessibility service is currently enabled. */
     @JavascriptInterface
     fun isRecentsRedirectEnabled(): Boolean {

@@ -165,6 +165,9 @@
   function isRecentsRedirectEnabled() {
     return callBool("isRecentsRedirectEnabled", []);
   }
+  function openAppDetails() {
+    callBool("openAppDetails", []);
+  }
   function dismissNotification(key) {
     callBool("dismissNotification", [key]);
   }
@@ -1807,6 +1810,16 @@
           isRecentsRedirectEnabled(),
           "ENABLE",
           openAccessibilitySettings
+        ),
+        h(
+          Text,
+          { variant: "dim", size: "xs", style: { display: "block", marginTop: 8 } },
+          "Sideloaded build: if a toggle is greyed out as a RESTRICTED SETTING, open APP INFO, tap the overflow menu and choose \"Allow restricted settings\" first."
+        ),
+        h(
+          Button,
+          { variant: "ghost", block: true, glow: false, onClick: act(openAppDetails) },
+          "APP INFO (ALLOW RESTRICTED)"
         )
       )
     );
