@@ -81,6 +81,59 @@ body { margin: 0; }
   gap: 8px;
 }
 
+/* Three-column grid for shortcut / quick-launch buttons */
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+/* HOME big clock */
+.home-clock { text-align: center; }
+.home-clock .pip-heading {
+  font-size: clamp(2.5rem, 14vw, 4.5rem);
+  line-height: 1.05;
+  margin: 0;
+}
+
+/* HOME notification mini preview rows */
+.notif-mini + .notif-mini { margin-top: 8px; }
+
+/* DATA notifications: tappable main area + clear button */
+.notif-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.notif-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.notif-row__main .ellipsis,
+.notif-row__main > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notif-row__clear { flex: 0 0 auto; align-self: center; }
+
+/* RADIO system-access rows */
+.access-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.access-row + .access-row { margin-top: 10px; }
+.access-row__info { flex: 1 1 auto; min-width: 0; }
+.access-row__btn { flex: 0 0 auto; }
+
 /* Modal action stack */
 .modal-actions { display: flex; flex-direction: column; gap: 8px; }
 
