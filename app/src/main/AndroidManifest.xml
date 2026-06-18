@@ -141,6 +141,21 @@
             </intent-filter>
         </service>
 
+        <!-- Experimental: redirect the Recents key to our in-app RECENT view.
+             User-enabled in Accessibility settings; intercepts KEYCODE_APP_SWITCH. -->
+        <service
+            android:name=".accessibility.RecentsAccessibilityService"
+            android:exported="true"
+            android:label="@string/recents_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_recents" />
+        </service>
+
         <!-- Reads active notifications for the DATA > NOTIFS screen. The user must
              grant "notification access" in Settings; the bind permission restricts
              binding to the system. -->

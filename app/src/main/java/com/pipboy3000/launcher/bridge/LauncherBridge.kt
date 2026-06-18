@@ -578,6 +578,29 @@ class LauncherBridge(
     fun hideKeyboard() { try { keyboard(false) } catch (e: Exception) {} }
 
     // ---------------------------------------------------------------------
+    // Recents redirect (accessibility)
+    // ---------------------------------------------------------------------
+
+    /** Open the system Accessibility settings so the user can enable the redirect. */
+    @JavascriptInterface
+    fun openAccessibilitySettings(): Boolean = startSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+
+    /** True if our Recents-redirect accessibility service is currently enabled. */
+    @JavascriptInterface
+    fun isRecentsRedirectEnabled(): Boolean {
+        return try {
+            val enabled = Settings.Secure.getString(
+                activity.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ) ?: return false
+            enabled.contains("${activity.packageName}/") &&
+                enabled.contains("RecentsAccessibilityService")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Default SMS app
     // ---------------------------------------------------------------------
 

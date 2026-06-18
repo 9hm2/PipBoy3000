@@ -159,6 +159,12 @@
   function openNotificationAccessSettings() {
     callBool("openNotificationAccessSettings", []);
   }
+  function openAccessibilitySettings() {
+    callBool("openAccessibilitySettings", []);
+  }
+  function isRecentsRedirectEnabled() {
+    return callBool("isRecentsRedirectEnabled", []);
+  }
   function dismissNotification(key) {
     callBool("dismissNotification", [key]);
   }
@@ -1795,6 +1801,12 @@
           access && access.notificationAccess,
           "ENABLE",
           openNotificationAccessSettings
+        ),
+        accessRow(
+          "RECENTS REDIRECT",
+          isRecentsRedirectEnabled(),
+          "ENABLE",
+          openAccessibilitySettings
         )
       )
     );
@@ -2609,8 +2621,14 @@
             return n + 1;
           });
         }
+        // Native deep-link (e.g. the Recents-key redirect) -> open a view.
+        function onOpen(e) {
+          var what = e && e.detail ? String(e.detail) : "";
+          if (what === "recents") setTab("apps"); // APPS hosts the RECENT strip
+        }
         window.addEventListener("pipboy:refresh", onRefresh);
         window.addEventListener("pipboy:sms", onSms);
+        window.addEventListener("pipboy:open", onOpen);
         var ivStats = setInterval(refreshStats, 10000);
         var ivClock = setInterval(function () {
           setClock(clockNow());
@@ -2619,6 +2637,7 @@
         return function () {
           window.removeEventListener("pipboy:refresh", onRefresh);
           window.removeEventListener("pipboy:sms", onSms);
+          window.removeEventListener("pipboy:open", onOpen);
           clearInterval(ivStats);
           clearInterval(ivClock);
           clearInterval(ivTraffic);

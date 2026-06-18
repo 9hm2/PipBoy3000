@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">PIP-BOY 3000</string>
+    <string name="recents_accessibility_label">PIP-BOY Recents</string>
+    <string name="recents_accessibility_desc">Redirects the Recents key to the in-app RECENT apps view so you stay in the Pip-Boy interface. Works with key-based (3-button) navigation.</string>
 </resources>

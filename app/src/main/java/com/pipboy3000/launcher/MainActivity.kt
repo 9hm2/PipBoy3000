@@ -45,6 +45,10 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
 
+    /** Web page load state + a pending deep-link ("recents") from the Recents key. */
+    private var pageReady = false
+    private var pendingOpen: String? = null
+
     /** Pip-Boy background green-black; matches the web UI so there's no white flash. */
     private val pipBoyBg = 0xFF0B1410.toInt()
 
@@ -135,6 +139,9 @@ class MainActivity : ComponentActivity() {
                 // else: no-op. As HOME, there's nowhere to "back out" to.
             }
         })
+
+        // A cold start triggered by the Recents redirect carries this extra.
+        handleOpenIntent(intent)
     }
 
     private fun createWebView(): WebView {
@@ -203,7 +210,9 @@ class MainActivity : ComponentActivity() {
 
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
+                    pageReady = true
                     dispatchRefresh()
+                    flushPendingOpen()
                 }
             }
         }.also {
@@ -303,6 +312,26 @@ class MainActivity : ComponentActivity() {
         // At minimum refresh; the web UI may reset to its main tab on this event.
         setIntent(intent)
         dispatchRefresh()
+        handleOpenIntent(intent)
+    }
+
+    /** Capture a "pipboy.open" deep-link (e.g. from the Recents redirect service). */
+    private fun handleOpenIntent(intent: Intent?) {
+        val o = intent?.getStringExtra("pipboy.open") ?: return
+        pendingOpen = o
+        flushPendingOpen()
+    }
+
+    /** Once the page is ready, tell the web UI which view to open (e.g. recents). */
+    private fun flushPendingOpen() {
+        val o = pendingOpen ?: return
+        if (pageReady && ::webView.isInitialized) {
+            webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('pipboy:open',{detail:'$o'}));",
+                null,
+            )
+            pendingOpen = null
+        }
     }
 
     override fun onDestroy() {
