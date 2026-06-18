@@ -235,6 +235,32 @@
     return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + " " + units[i];
   }
 
+  // Left-pad to a fixed width (monospace -> stable column width, no jitter).
+  function padL(s, w) {
+    s = String(s);
+    while (s.length < w) s = " " + s;
+    return s;
+  }
+  function padR(s, w) {
+    s = String(s);
+    while (s.length < w) s = s + " ";
+    return s;
+  }
+
+  // Compact, FIXED-WIDTH transfer rate for the chrome (e.g. "  1.2M"): a single
+  // unit letter keeps it short, padded so the value never changes the layout.
+  function speedTokenFixed(bytesPerSec) {
+    var n = (bytesPerSec == null || isNaN(bytesPerSec) || bytesPerSec < 0) ? 0 : Number(bytesPerSec);
+    var u = ["B", "K", "M", "G"];
+    var i = 0;
+    while (n >= 1024 && i < u.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    var tok = (i === 0 || n >= 100 ? Math.round(n).toString() : n.toFixed(1)) + u[i];
+    return padL(tok, 6);
+  }
+
   // Run an action that opens/launches/navigates externally, then drop focus so
   // the tapped control does not stay visually "lit" (focus glow / active state).
   function act(fn) {
@@ -1401,12 +1427,19 @@
         var ro = null;
         var resizeDebounce = null;
 
+        // Character size is user-adjustable by pinch-zoom and persisted.
+        var fontSize = 14;
+        try {
+          var savedFs = parseInt(window.localStorage.getItem("pipboy.term.fontSize"), 10);
+          if (savedFs >= 6 && savedFs <= 40) fontSize = savedFs;
+        } catch (e) {}
+
         try {
           term = new window.Terminal({
             allowProposedApi: true,
             cursorBlink: true,
             fontFamily: "'Share Tech Mono','VT323',monospace",
-            fontSize: 14,
+            fontSize: fontSize,
             scrollback: 5000,
             convertEol: false,
             theme: TERM_THEME,
@@ -1514,6 +1547,50 @@
           el.addEventListener("click", onTap);
         } catch (e) {}
 
+        // --- pinch-zoom to set character size --------------------------------
+        var pinchStartDist = 0;
+        var pinchStartSize = fontSize;
+        var pinchTimer = null;
+        function touchDist(touches) {
+          var dx = touches[0].clientX - touches[1].clientX;
+          var dy = touches[0].clientY - touches[1].clientY;
+          return Math.sqrt(dx * dx + dy * dy);
+        }
+        function onTouchStart(ev) {
+          if (ev.touches && ev.touches.length === 2) {
+            pinchStartDist = touchDist(ev.touches);
+            pinchStartSize = fontSize;
+            try { ev.preventDefault(); } catch (e) {}
+          }
+        }
+        function onTouchMove(ev) {
+          if (ev.touches && ev.touches.length === 2 && pinchStartDist > 0) {
+            try { ev.preventDefault(); } catch (e) {}
+            var ratio = touchDist(ev.touches) / pinchStartDist;
+            var ns = Math.round(pinchStartSize * ratio);
+            if (ns < 6) ns = 6;
+            if (ns > 40) ns = 40;
+            if (ns !== fontSize) {
+              fontSize = ns;
+              try { term.options.fontSize = ns; } catch (e) {}
+              if (pinchTimer) clearTimeout(pinchTimer);
+              pinchTimer = setTimeout(function () {
+                doFit();
+                try { window.localStorage.setItem("pipboy.term.fontSize", String(fontSize)); } catch (e) {}
+              }, 30);
+            }
+          }
+        }
+        function onTouchEnd(ev) {
+          if (!ev.touches || ev.touches.length < 2) pinchStartDist = 0;
+        }
+        try {
+          el.addEventListener("touchstart", onTouchStart, { passive: false });
+          el.addEventListener("touchmove", onTouchMove, { passive: false });
+          el.addEventListener("touchend", onTouchEnd);
+          el.addEventListener("touchcancel", onTouchEnd);
+        } catch (e) {}
+
         // Expose for the toolbar buttons.
         sessRef.current = { term: term, fit: fit };
 
@@ -1536,6 +1613,13 @@
           } catch (e) {}
           try {
             el.removeEventListener("click", onTap);
+          } catch (e) {}
+          try {
+            if (pinchTimer) clearTimeout(pinchTimer);
+            el.removeEventListener("touchstart", onTouchStart);
+            el.removeEventListener("touchmove", onTouchMove);
+            el.removeEventListener("touchend", onTouchEnd);
+            el.removeEventListener("touchcancel", onTouchEnd);
           } catch (e) {}
           // Keep the native shell alive across tab switches - do NOT termStop().
           try {
@@ -1750,8 +1834,8 @@
     var battery = stats ? stats.batteryPct : null;
     var charging = stats && stats.charging;
 
-    // BAT chip
-    var batVal = (battery == null ? "--" : battery + "%") + (charging ? " ⚡" : "");
+    // BAT chip — fixed width so charging feedback doesn't reflow the bar.
+    var batVal = padR((battery == null ? "--" : battery + "%"), 4) + (charging ? " CHG" : "    ");
 
     // SIG chip: wifi bars if connected, else mobile type, else nothing.
     var sigVal = "--";
@@ -1771,12 +1855,12 @@
         sigTone = "danger";
       }
     }
+    sigVal = padR(sigVal, 5); // fixed width so SIG changes don't shift the row
 
-    // NET chip: live up/down throughput.
-    var netVal = "—";
-    if (speed) {
-      netVal = "↓" + formatSpeed(speed.rx) + " ↑" + formatSpeed(speed.tx);
-    }
+    // NET chip: live up/down throughput — FIXED WIDTH so it never reflows.
+    var netVal = speed
+      ? "↓" + speedTokenFixed(speed.rx) + " ↑" + speedTokenFixed(speed.tx)
+      : "↓" + padL("-", 6) + " ↑" + padL("-", 6);
 
     var items = [
       statusItem("BAT", batVal, batteryTone(battery)),
@@ -2034,7 +2118,9 @@
         onDismiss: dismissAndRefresh,
       });
     } else if (tab === "term") {
-      body = h(TerminalScreen, { noBridge: !hasBridge() });
+      // TERM is rendered by a PERSISTENT host below (kept mounted so the
+      // terminal preserves its state across tab switches / backgrounding).
+      body = null;
     } else if (tab === "stat") {
       body = h(StatScreen, { stats: stats, net: net, audio: audio, display: display });
     } else if (tab === "radio") {
@@ -2176,7 +2262,22 @@
             h(Tabs, { tabs: mainTabs, value: tab, onChange: setTab })
           )
         ),
-        h("div", { className: "app__body" }, body)
+        h(
+          "div",
+          { className: "app__body" },
+          body,
+          // Persistent terminal host: always mounted so the xterm buffer + the
+          // shell session survive tab switches and the app going to background;
+          // only shown on the TERM tab.
+          h(
+            "div",
+            {
+              className: "term-host",
+              style: { display: tab === "term" ? "flex" : "none" },
+            },
+            h(TerminalScreen, { noBridge: !hasBridge() })
+          )
+        )
       ),
       h(NotifPopups, { onOpen: openNotification }),
       modal
