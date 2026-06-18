@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.pipboy3000.launcher"
     compileSdk = 34
+    ndkVersion = "26.1.10909125"
 
     defaultConfig {
         applicationId = "com.pipboy3000.launcher"
@@ -13,6 +14,22 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += "-DANDROID_STL=none"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // Constant debug key: signed with the repo-committed debug.keystore so every

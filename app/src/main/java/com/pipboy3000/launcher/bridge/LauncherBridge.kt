@@ -56,7 +56,12 @@ import java.util.Locale
 class LauncherBridge(
     private val activity: android.app.Activity,
     private val requestPermissions: () -> Unit,
+    /** Runs JS on the WebView (UI thread). Used to stream terminal output. */
+    private val emitJs: (String) -> Unit = {},
 ) {
+
+    /** Live xterm.js-backed shell session for the TERM tab (lazily created). */
+    private var terminal: TerminalSession? = null
 
     // ---------------------------------------------------------------------
     // Apps
@@ -456,6 +461,42 @@ class LauncherBridge(
                 .put("truncated", false)
                 .toString()
         }
+    }
+
+    /** True if the native PTY is available (interactive emulator can run). */
+    @JavascriptInterface
+    fun termAvailable(): Boolean = try { PtyBridge.available } catch (e: Throwable) { false }
+
+    /** Start (or re-size) the interactive shell session at [cols] x [rows]. */
+    @JavascriptInterface
+    fun termStart(cols: Int, rows: Int): Boolean {
+        return try {
+            val t = terminal ?: TerminalSession(activity, emitJs).also { terminal = it }
+            t.start(cols, rows)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Feed base64-encoded UTF-8 input bytes (xterm.js onData) to the shell. */
+    @JavascriptInterface
+    fun termWrite(b64: String) {
+        try { terminal?.write(b64) } catch (e: Exception) { }
+    }
+
+    /** Tell the PTY the viewport size changed. */
+    @JavascriptInterface
+    fun termResize(cols: Int, rows: Int) {
+        try { terminal?.resize(cols, rows) } catch (e: Exception) { }
+    }
+
+    /** Kill the shell session. */
+    @JavascriptInterface
+    fun termStop() {
+        try {
+            terminal?.stop()
+            terminal = null
+        } catch (e: Exception) { }
     }
 
     /** Read a stream into [sink] up to [maxBytes] characters. */

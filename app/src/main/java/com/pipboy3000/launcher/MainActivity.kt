@@ -89,7 +89,11 @@ class MainActivity : ComponentActivity() {
         // by the time the page's scripts run. The lambda is the web-triggered
         // permission entry point.
         webView.addJavascriptInterface(
-            LauncherBridge(this) { requestCorePermissions() },
+            LauncherBridge(
+                this,
+                { requestCorePermissions() },
+                { js -> runOnUiThread { if (::webView.isInitialized) webView.evaluateJavascript(js, null) } },
+            ),
             "AndroidBridge",
         )
 
