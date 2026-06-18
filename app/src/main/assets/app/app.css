@@ -20,15 +20,15 @@ body { margin: 0; }
   box-sizing: border-box;
 }
 
-/* App shell: fixed header/tabs, scrollable body */
+/* App shell: fixed chrome (system bar + tabs), single scrollable body */
 .app {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0; /* allow children to shrink so overflow works */
 }
-.app__header { flex: 0 0 auto; }
-.app__tabs { flex: 0 0 auto; }
+.app__chrome { flex: 0 0 auto; }
+.app__tabs { flex: 0 0 auto; margin-top: 10px; }
 .app__body {
   flex: 1 1 auto;
   min-height: 0;
@@ -40,88 +40,82 @@ body { margin: 0; }
 /* Vertical stacking of sections with breathing room */
 .stack > * + * { margin-top: 12px; }
 
-/* Scrollable lists (app drawer, call log, contacts) */
-.list-scroll {
-  max-height: 100%;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+/* System bar: clock identity on the left, vitals chips on the right */
+.sysbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
+.sysbar__clock { flex: 0 0 auto; }
+.sysbar__clock .pip-heading {
+  font-size: clamp(2rem, 9vw, 3rem);
+  line-height: 1;
+  margin: 0;
+}
+.sysbar__vitals {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: right;
+}
+.sysbar__vitals .pip-status-bar { justify-content: flex-end; }
 
-/* A single tappable row: marker | primary text | meta — used for call log */
-.row {
+/* Shared list rows (apps / contacts / call log / notifications) */
+.rows > * + * { margin-top: 4px; }
+
+/* A docked horizontal-wrapping group (favorites / frequent) */
+.dock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dock .lrow { width: auto; flex: 0 1 auto; }
+.dock .lrow__main { padding: 4px 8px; }
+
+/* The single tappable ListRow: marker | body | trailing meta + optional action */
+.lrow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.lrow__main {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 10px;
-  width: 100%;
   text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 6px 4px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
-.row__main { flex: 1 1 auto; min-width: 0; }
-.row__main .ellipsis,
+.lrow__marker { flex: 0 0 auto; width: 1.4em; text-align: center; }
+.lrow__body { flex: 1 1 auto; min-width: 0; }
+.lrow__primary { display: block; }
+.lrow__secondary { display: block; opacity: 0.6; }
+.lrow__meta { flex: 0 0 auto; opacity: 0.7; align-self: center; }
+.lrow__action { flex: 0 0 auto; align-self: center; }
 .ellipsis {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.row__meta { flex: 0 0 auto; }
-.row__marker { flex: 0 0 auto; width: 1.4em; text-align: center; }
 
-/* App drawer row: menu fills, info button sits beside it */
-.app-row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-.app-row__name { flex: 1 1 auto; min-width: 0; }
-.app-row__info { flex: 0 0 auto; }
-
-/* Two-column grid for RADIO quick-setting buttons */
-.grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-/* Three-column grid for shortcut / quick-launch buttons */
+/* Three-column grid for shortcut buttons (RADIO) */
 .grid-3 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
-
-/* HOME big clock */
-.home-clock { text-align: center; }
-.home-clock .pip-heading {
-  font-size: clamp(2.5rem, 14vw, 4.5rem);
-  line-height: 1.05;
-  margin: 0;
-}
-
-/* HOME notification mini preview rows */
-.notif-mini + .notif-mini { margin-top: 8px; }
-
-/* DATA notifications: tappable main area + clear button */
-.notif-row {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-}
-.notif-row__main {
-  flex: 1 1 auto;
-  min-width: 0;
-  text-align: left;
-  background: transparent;
-  border: 0;
-  padding: 4px 0;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.notif-row__main .ellipsis,
-.notif-row__main > * {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.notif-row__clear { flex: 0 0 auto; align-self: center; }
 
 /* RADIO system-access rows */
 .access-row {
@@ -137,6 +131,6 @@ body { margin: 0; }
 /* Modal action stack */
 .modal-actions { display: flex; flex-direction: column; gap: 8px; }
 
-/* Generic key/value text row inside SYSTEM panel */
+/* Generic key/value text row inside readout panels */
 .kv { display: flex; justify-content: space-between; gap: 12px; }
 .kv > :last-child { text-align: right; }
