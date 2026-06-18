@@ -15,6 +15,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import com.pipboy3000.launcher.bridge.LauncherBridge
 
@@ -67,15 +69,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // --- Edge-to-edge: full-screen launcher. The web UI handles safe areas via
-        // CSS env(safe-area-inset-*); we only need transparent system bars and to let
-        // content draw under them. We do NOT permanently hide the status bar.
+        // --- Edge-to-edge full-screen launcher. Draw under the system bars; the web
+        // UI subtracts the navigation-bar inset via CSS env(safe-area-inset-*).
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
 
         webView = createWebView()
         setContentView(webView)
+
+        // Hide the top notification/status bar for a clean terminal surface; keep the
+        // navigation bar (the layout accounts for it). A swipe reveals bars transiently.
+        applyImmersive()
 
         // Construct + register the bridge BEFORE loadUrl so the JS interface exists
         // by the time the page's scripts run. The lambda is the web-triggered
@@ -157,6 +162,24 @@ class MainActivity : ComponentActivity() {
                 WebView.setWebContentsDebuggingEnabled(true)
             }
         }
+    }
+
+    /** Hide the status bar (notification bar); keep the nav bar. Bars show on swipe. */
+    private fun applyImmersive() {
+        try {
+            val controller = WindowInsetsControllerCompat(window, webView)
+            controller.hide(WindowInsetsCompat.Type.statusBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } catch (e: Exception) {
+            // swallow — immersive is best-effort
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // The system can restore the status bar after dialogs/permission prompts; re-hide.
+        if (hasFocus) applyImmersive()
     }
 
     /** Passed to LauncherBridge; the web UI calls this via AndroidBridge.requestPermissions(). */
