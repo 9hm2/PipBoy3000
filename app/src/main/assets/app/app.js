@@ -1583,41 +1583,13 @@
       );
     }
 
-    // Minimal toolbar: just the genuine controls (clear screen / restart shell).
-    var toolbar = h(
-      "div",
-      { className: "term__toolbar" },
-      h(
-        Button,
-        {
-          variant: "ghost",
-          glow: false,
-          onClick: act(function () {
-            doClear();
-          }),
-        },
-        "CLEAR"
-      ),
-      h(
-        Button,
-        {
-          variant: "danger",
-          glow: false,
-          onClick: act(function () {
-            doKill();
-          }),
-        },
-        "KILL"
-      )
-    );
-
+    // No toolbar — just the terminal surface.
     return h(
       "div",
       { className: "term" },
       h(
         Section,
         { title: "TERMINAL", className: "term__panel" },
-        toolbar,
         h("div", { className: "term__xterm", ref: containerRef })
       )
     );
