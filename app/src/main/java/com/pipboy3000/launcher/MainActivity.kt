@@ -16,6 +16,8 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import android.view.ViewGroup.MarginLayoutParams
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -80,6 +82,21 @@ class MainActivity : ComponentActivity() {
 
         webView = createWebView()
         setContentView(webView)
+
+        // When the keyboard (IME) opens, shrink the WebView by the IME height so
+        // the web viewport reflows above it — the terminal (and any input) resizes
+        // to fit instead of being covered. The bottom nav-bar inset is handled in
+        // CSS (env safe-area), so we only consume the IME inset here.
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            (v.layoutParams as? MarginLayoutParams)?.let { lp ->
+                if (lp.bottomMargin != ime) {
+                    lp.bottomMargin = ime
+                    v.layoutParams = lp
+                }
+            }
+            insets
+        }
 
         // Hide the top notification/status bar for a clean terminal surface; keep the
         // navigation bar (the layout accounts for it). A swipe reveals bars transiently.

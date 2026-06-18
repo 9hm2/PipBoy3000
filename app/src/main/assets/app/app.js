@@ -1583,48 +1583,32 @@
       );
     }
 
+    // Minimal toolbar: just the genuine controls (clear screen / restart shell).
     var toolbar = h(
       "div",
       { className: "term__toolbar" },
-      TERM_QUICK.map(function (qc) {
-        return h(
-          Button,
-          {
-            key: qc,
-            variant: "ghost",
-            glow: false,
-            onClick: act(function () {
-              sendInput(qc + "\n");
-            }),
-          },
-          qc
-        );
-      }).concat([
-        h(
-          Button,
-          {
-            key: "__clear",
-            variant: "ghost",
-            glow: false,
-            onClick: act(function () {
-              doClear();
-            }),
-          },
-          "CLEAR"
-        ),
-        h(
-          Button,
-          {
-            key: "__kill",
-            variant: "danger",
-            glow: false,
-            onClick: act(function () {
-              doKill();
-            }),
-          },
-          "KILL"
-        ),
-      ])
+      h(
+        Button,
+        {
+          variant: "ghost",
+          glow: false,
+          onClick: act(function () {
+            doClear();
+          }),
+        },
+        "CLEAR"
+      ),
+      h(
+        Button,
+        {
+          variant: "danger",
+          glow: false,
+          onClick: act(function () {
+            doKill();
+          }),
+        },
+        "KILL"
+      )
     );
 
     return h(
