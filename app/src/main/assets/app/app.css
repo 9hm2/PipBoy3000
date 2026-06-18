@@ -394,3 +394,19 @@ html, body, #root {
   padding-left: var(--pip-space-2);
   padding-right: var(--pip-space-2);
 }
+
+/* --------------------------------------------- wide / foldable / landscape ---
+   Rotation is enabled (manifest) and config changes are handled, so the WebView
+   just reflows — these rules make wide / unfolded-foldable / tablet layouts look
+   intentional rather than stretched. The whole .app column (chrome + tabs +
+   body together) is centered to a comfortable measure; grids/docks already
+   auto-fit, so the extra width becomes more columns instead of dead space. */
+@media (min-width: 700px) {
+  .pip-screen > .pip-screen__inner { align-items: center; }
+  .app { width: 100%; max-width: 960px; }
+}
+/* Only grow the clock when there's also vertical room (not on short landscape
+   phones, which keep the compact chrome from the max-height rule above). */
+@media (min-width: 700px) and (min-height: 640px) {
+  .sysbar__clock .pip-heading { font-size: clamp(2.2rem, 7vw, 3.4rem); }
+}
