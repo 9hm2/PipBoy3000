@@ -174,11 +174,6 @@
   function vibrate(ms) {
     callBool("vibrate", [ms]);
   }
-  // Guarded shell exec. Returns {cmd,stdout,stderr,exit,truncated} or null.
-  function runCommand(cmd) {
-    return callJson("runCommand", [cmd], null);
-  }
-
   /* ------------------------------------------------------------- storage */
   function lsGet(key, fallback) {
     try {
@@ -1254,178 +1249,383 @@
   }
 
   /* ============================================================= TERM screen */
-  // A Pip-Boy shell. Scrollback (the inner scroll region) + a pinned input row.
-  // Output is a capped, in-memory line buffer; command history is ArrowUp/Down.
-  var TERM_MAX_LINES = 300;
-  var TERM_QUICK = ["getprop", "ps", "ls /sdcard", "ip addr", "uptime"];
+  // A REAL terminal: xterm.js (bundled) wired to a native PTY-backed shell over
+  // AndroidBridge.term*(). The TERM body does NOT page-scroll — xterm manages
+  // its own scrollback inside a flex:1 container. Quick chips just send input.
+  var TERM_QUICK = ["getprop", "ps", "ls", "ip addr", "uptime"];
+
+  // Pip-Boy palette for xterm. Colours only — sizing comes from CSS.
+  var TERM_THEME = {
+    background: "#0b1410",
+    foreground: "#33ff66",
+    cursor: "#7dff9e",
+    cursorAccent: "#0b1410",
+    selectionBackground: "#155f2c",
+    black: "#07100c",
+    red: "#ff4d4d",
+    green: "#33ff66",
+    yellow: "#ffb000",
+    blue: "#1f9c45",
+    magenta: "#7dff9e",
+    cyan: "#1f9c45",
+    white: "#7dff9e",
+    brightBlack: "#155f2c",
+    brightRed: "#ff4d4d",
+    brightGreen: "#7dff9e",
+    brightYellow: "#ffb000",
+    brightBlue: "#33ff66",
+    brightMagenta: "#7dff9e",
+    brightCyan: "#33ff66",
+    brightWhite: "#dfffe9",
+  };
+
+  // --- base64 <-> bytes helpers (guarded, WebView-safe) -------------------
+  // Encode a JS string as UTF-8 then base64 (for termWrite input).
+  function b64FromString(str) {
+    try {
+      var bytes;
+      if (typeof window.TextEncoder !== "undefined") {
+        bytes = new window.TextEncoder().encode(str);
+      } else {
+        // Manual UTF-8 encode fallback.
+        var arr = [];
+        for (var i = 0; i < str.length; i++) {
+          var c = str.charCodeAt(i);
+          if (c < 0x80) {
+            arr.push(c);
+          } else if (c < 0x800) {
+            arr.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+          } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+            // Surrogate pair -> astral codepoint.
+            var c2 = str.charCodeAt(i + 1);
+            var cp = 0x10000 + ((c & 0x3ff) << 10) + (c2 & 0x3ff);
+            i++;
+            arr.push(
+              0xf0 | (cp >> 18),
+              0x80 | ((cp >> 12) & 0x3f),
+              0x80 | ((cp >> 6) & 0x3f),
+              0x80 | (cp & 0x3f)
+            );
+          } else {
+            arr.push(
+              0xe0 | (c >> 12),
+              0x80 | ((c >> 6) & 0x3f),
+              0x80 | (c & 0x3f)
+            );
+          }
+        }
+        bytes = arr;
+      }
+      var bin = "";
+      for (var j = 0; j < bytes.length; j++) {
+        bin += String.fromCharCode(bytes[j]);
+      }
+      return window.btoa(bin);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  // Decode a base64 string into a Uint8Array of raw bytes (for term.write).
+  function bytesFromB64(b64) {
+    try {
+      var bin = window.atob(b64 || "");
+      var out = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) {
+        out[i] = bin.charCodeAt(i) & 0xff;
+      }
+      return out;
+    } catch (e) {
+      return new Uint8Array(0);
+    }
+  }
+
+  // Guarded bridge wrappers for the PTY contract.
+  function termAvailable() {
+    try {
+      if (!hasBridge()) return false;
+      var fn = bridge().termAvailable;
+      if (typeof fn !== "function") return false;
+      return !!fn.apply(bridge(), []);
+    } catch (e) {
+      return false;
+    }
+  }
+  function termStart(cols, rows) {
+    return callBool("termStart", [cols, rows]);
+  }
+  function termWrite(b64) {
+    callBool("termWrite", [b64]);
+  }
+  function termResize(cols, rows) {
+    callBool("termResize", [cols, rows]);
+  }
+  function termStop() {
+    callBool("termStop", []);
+  }
 
   function TerminalScreen(props) {
     var noBridge = props.noBridge;
 
-    // Scrollback lines: { id, kind:"cmd"|"out"|"err"|"exit", text }.
-    var linesState = useState([]);
-    var lines = linesState[0], setLines = linesState[1];
-    var inputState = useState("");
-    var inputVal = inputState[0], setInputVal = inputState[1];
-
-    var scrollRef = useRef(null);
-    var idRef = useRef(0);
-    var cmdHistRef = useRef([]); // entered commands (oldest..newest)
-    var histPosRef = useRef(-1); // -1 = not navigating
-
-    // Append lines, keeping only the last TERM_MAX_LINES.
-    var pushLines = useCallback(function (items) {
-      setLines(function (prev) {
-        var next = prev.concat(items);
-        if (next.length > TERM_MAX_LINES) {
-          next = next.slice(next.length - TERM_MAX_LINES);
-        }
-        return next;
-      });
-    }, []);
-
-    function nextId() {
-      idRef.current += 1;
-      return idRef.current;
-    }
-
-    // Turn a stdout/stderr blob into per-line entries (preserve blank lines).
-    function blockToLines(text, kind) {
-      var out = [];
-      if (text == null || text === "") return out;
-      var parts = String(text).split("\n");
-      // Drop a single trailing empty line from a final newline.
-      if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
-      for (var i = 0; i < parts.length; i++) {
-        out.push({ id: nextId(), kind: kind, text: parts[i] });
-      }
-      return out;
-    }
-
-    var runCmd = useCallback(
-      function (cmd) {
-        var trimmed = (cmd || "").trim();
-        if (!trimmed) return;
-        if (!hasBridge()) return;
-
-        var hist = cmdHistRef.current;
-        if (hist.length === 0 || hist[hist.length - 1] !== trimmed) {
-          hist.push(trimmed);
-          if (hist.length > 100) hist.shift();
-        }
-        histPosRef.current = -1;
-
-        var batch = [{ id: nextId(), kind: "cmd", text: trimmed }];
-        var res = runCommand(trimmed);
-        if (!res) {
-          batch = batch.concat(blockToLines("(no response from host)", "err"));
-        } else {
-          batch = batch.concat(blockToLines(res.stdout, "out"));
-          batch = batch.concat(blockToLines(res.stderr, "err"));
-          if (res.truncated) {
-            batch.push({ id: nextId(), kind: "exit", text: "[output truncated]" });
-          }
-          var ex = Number(res.exit);
-          if (ex) {
-            batch.push({ id: nextId(), kind: "exit", text: "[exit " + ex + "]" });
-          }
-        }
-        pushLines(batch);
+    // Is the native PTY usable on this device? (false -> show a note.)
+    var available = useMemo(
+      function () {
+        return !noBridge && termAvailable();
       },
-      [pushLines]
+      [noBridge]
     );
 
-    function submit() {
-      var cmd = inputVal;
-      setInputVal("");
-      runCmd(cmd);
+    var containerRef = useRef(null);
+    // Mutable session handle held in a ref so the toolbar buttons can reach it.
+    var sessRef = useRef(null);
+
+    // Send a literal command line into the shell (quick chips).
+    function sendInput(str) {
+      var b64 = b64FromString(str);
+      if (b64) termWrite(b64);
     }
 
-    function onKeyDown(e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        submit();
-        return;
-      }
-      var hist = cmdHistRef.current;
-      if (e.key === "ArrowUp") {
-        if (hist.length === 0) return;
-        e.preventDefault();
-        var pUp = histPosRef.current;
-        pUp = pUp === -1 ? hist.length - 1 : Math.max(0, pUp - 1);
-        histPosRef.current = pUp;
-        setInputVal(hist[pUp]);
-      } else if (e.key === "ArrowDown") {
-        if (hist.length === 0 || histPosRef.current === -1) return;
-        e.preventDefault();
-        var pDn = histPosRef.current + 1;
-        if (pDn >= hist.length) {
-          histPosRef.current = -1;
-          setInputVal("");
-        } else {
-          histPosRef.current = pDn;
-          setInputVal(hist[pDn]);
-        }
-      }
-    }
-
-    // Auto-scroll the scrollback to the bottom after each output change.
+    // --- lifecycle: create xterm on mount, dispose on unmount -------------
     useEffect(
       function () {
-        var el = scrollRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
+        if (!available) return undefined;
+        if (typeof window.Terminal === "undefined") return undefined;
+
+        var el = containerRef.current;
+        if (!el) return undefined;
+
+        var term;
+        var fit;
+        var exited = false;
+        var fitTimer = null;
+        var ro = null;
+        var resizeDebounce = null;
+
+        try {
+          term = new window.Terminal({
+            allowProposedApi: true,
+            cursorBlink: true,
+            fontFamily: "'Share Tech Mono','VT323',monospace",
+            fontSize: 14,
+            scrollback: 5000,
+            convertEol: false,
+            theme: TERM_THEME,
+          });
+          if (window.FitAddon && window.FitAddon.FitAddon) {
+            fit = new window.FitAddon.FitAddon();
+            term.loadAddon(fit);
+          }
+          term.open(el);
+        } catch (e) {
+          return undefined;
+        }
+
+        function doFit() {
+          try {
+            if (fit) fit.fit();
+            termResize(term.cols, term.rows);
+          } catch (e) {}
+        }
+
+        // Initial fit + start the shell. Fit again after a tick because the
+        // container may not be sized on first paint.
+        try {
+          if (fit) fit.fit();
+        } catch (e) {}
+        try {
+          termStart(term.cols, term.rows);
+        } catch (e) {}
+        fitTimer = setTimeout(function () {
+          doFit();
+          try {
+            // Re-assert start (native just resizes if already running).
+            termStart(term.cols, term.rows);
+          } catch (e) {}
+        }, 50);
+
+        // Input -> shell.
+        try {
+          term.onData(function (d) {
+            sendInput(d);
+          });
+        } catch (e) {}
+
+        // Shell output -> terminal (raw bytes; xterm handles UTF-8/ANSI).
+        function onOut(ev) {
+          try {
+            term.write(bytesFromB64(ev.detail));
+          } catch (err) {}
+        }
+        // Process exit -> dim note + arm restart on next key.
+        function onExit(ev) {
+          exited = true;
+          try {
+            term.writeln("");
+            term.writeln(
+              "\x1b[2m[process exited: " +
+                ev.detail +
+                "] - press any key to RESTART\x1b[0m"
+            );
+          } catch (err) {}
+        }
+
+        try {
+          window.addEventListener("pipboy:term", onOut);
+          window.addEventListener("pipboy:term:exit", onExit);
+        } catch (e) {}
+
+        // Restart the shell on any keypress after exit.
+        try {
+          term.onKey(function () {
+            if (exited) {
+              exited = false;
+              try {
+                term.writeln("\x1b[2m[restarting...]\x1b[0m");
+              } catch (err) {}
+              termStart(term.cols, term.rows);
+            }
+          });
+        } catch (e) {}
+
+        // Resize handling: ResizeObserver if available, else window resize.
+        function onResize() {
+          if (resizeDebounce) clearTimeout(resizeDebounce);
+          resizeDebounce = setTimeout(doFit, 80);
+        }
+        try {
+          if (typeof window.ResizeObserver !== "undefined") {
+            ro = new window.ResizeObserver(onResize);
+            ro.observe(el);
+          } else {
+            window.addEventListener("resize", onResize);
+          }
+        } catch (e) {}
+
+        // Focus so the (Pip-Boy-themed) keyboard opens. Tapping also focuses.
+        try {
+          term.focus();
+        } catch (e) {}
+        function onTap() {
+          try {
+            term.focus();
+          } catch (err) {}
+        }
+        try {
+          el.addEventListener("click", onTap);
+        } catch (e) {}
+
+        // Expose for the toolbar buttons.
+        sessRef.current = { term: term, fit: fit };
+
+        return function cleanup() {
+          try {
+            if (fitTimer) clearTimeout(fitTimer);
+          } catch (e) {}
+          try {
+            if (resizeDebounce) clearTimeout(resizeDebounce);
+          } catch (e) {}
+          try {
+            window.removeEventListener("pipboy:term", onOut);
+            window.removeEventListener("pipboy:term:exit", onExit);
+          } catch (e) {}
+          try {
+            window.removeEventListener("resize", onResize);
+          } catch (e) {}
+          try {
+            if (ro) ro.disconnect();
+          } catch (e) {}
+          try {
+            el.removeEventListener("click", onTap);
+          } catch (e) {}
+          // Keep the native shell alive across tab switches - do NOT termStop().
+          try {
+            term.dispose();
+          } catch (e) {}
+          sessRef.current = null;
+        };
       },
-      [lines]
+      [available]
     );
 
-    function lineNode(ln) {
-      if (ln.kind === "cmd") {
-        return h(
-          Text,
-          { key: ln.id, as: "div", variant: "bright", size: "sm", className: "term__line term__line--cmd" },
-          "> " + ln.text
-        );
+    // --- toolbar actions ---------------------------------------------------
+    function doClear() {
+      var s = sessRef.current;
+      if (s && s.term) {
+        try {
+          s.term.clear();
+        } catch (e) {}
       }
-      if (ln.kind === "err") {
-        return h(
-          Text,
-          {
-            key: ln.id,
-            as: "div",
-            size: "sm",
-            className: "term__line",
-            style: { color: "var(--pip-amber)" },
-          },
-          ln.text === "" ? " " : ln.text
-        );
+    }
+    function doKill() {
+      termStop();
+      var s = sessRef.current;
+      if (s && s.term) {
+        try {
+          s.term.dispose();
+        } catch (e) {}
       }
-      if (ln.kind === "exit") {
-        return h(
-          Text,
-          { key: ln.id, as: "div", variant: "dim", size: "xs", className: "term__line" },
-          ln.text
-        );
-      }
-      // out
+      sessRef.current = null;
+    }
+
+    // --- render ------------------------------------------------------------
+    if (!available) {
+      var note = noBridge
+        ? "OFFLINE PREVIEW - shell unavailable without host bridge."
+        : "PTY unavailable on this device.";
       return h(
-        Text,
-        { key: ln.id, as: "div", variant: "body", size: "sm", className: "term__line" },
-        ln.text === "" ? " " : ln.text
+        "div",
+        { className: "term" },
+        h(
+          Section,
+          { title: "TERMINAL", className: "term__panel" },
+          h(Text, { variant: "dim" }, note)
+        )
       );
     }
 
-    var scrollbackBody;
-    if (noBridge) {
-      scrollbackBody = h(Text, { variant: "dim" }, "OFFLINE PREVIEW — shell unavailable without host bridge.");
-    } else if (lines.length === 0) {
-      scrollbackBody = h(
-        Text,
-        { variant: "dim" },
-        "Pip-Boy shell ready. Enter a command or tap a quick action below."
-      );
-    } else {
-      scrollbackBody = h("div", { className: "term__lines" }, lines.map(lineNode));
-    }
+    var toolbar = h(
+      "div",
+      { className: "term__toolbar" },
+      TERM_QUICK.map(function (qc) {
+        return h(
+          Button,
+          {
+            key: qc,
+            variant: "ghost",
+            glow: false,
+            onClick: act(function () {
+              sendInput(qc + "\n");
+            }),
+          },
+          qc
+        );
+      }).concat([
+        h(
+          Button,
+          {
+            key: "__clear",
+            variant: "ghost",
+            glow: false,
+            onClick: act(function () {
+              doClear();
+            }),
+          },
+          "CLEAR"
+        ),
+        h(
+          Button,
+          {
+            key: "__kill",
+            variant: "danger",
+            glow: false,
+            onClick: act(function () {
+              doKill();
+            }),
+          },
+          "KILL"
+        ),
+      ])
+    );
 
     return h(
       "div",
@@ -1433,56 +1633,8 @@
       h(
         Section,
         { title: "TERMINAL", className: "term__panel" },
-        h("div", { className: "term__scroll", ref: scrollRef }, scrollbackBody)
-      ),
-      h(
-        "div",
-        { className: "term__quick" },
-        TERM_QUICK.map(function (qc) {
-          return h(
-            Button,
-            {
-              key: qc,
-              variant: "ghost",
-              glow: false,
-              onClick: act(function () {
-                runCmd(qc);
-              }),
-            },
-            qc
-          );
-        })
-      ),
-      h(
-        "div",
-        { className: "term__inputrow" },
-        h(Input, {
-          className: "term__input",
-          placeholder: noBridge ? "shell offline" : "enter command…",
-          value: inputVal,
-          disabled: noBridge,
-          onKeyDown: onKeyDown,
-          onChange: function (e) {
-            histPosRef.current = -1;
-            setInputVal(e.target.value);
-          },
-        }),
-        h(
-          Button,
-          {
-            variant: "primary",
-            glow: false,
-            onClick: act(function () {
-              submit();
-            }),
-          },
-          "RUN"
-        )
-      ),
-      h(
-        Text,
-        { as: "div", variant: "dim", size: "xs", className: "term__hint" },
-        "Non-root shell. Some commands are restricted."
+        toolbar,
+        h("div", { className: "term__xterm", ref: containerRef })
       )
     );
   }

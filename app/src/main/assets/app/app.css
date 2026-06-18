@@ -232,14 +232,15 @@ html, body, #root {
 }
 
 /* --------------------------------------------------------------- TERMINAL ---
-   Fills the locked body: the scrollback Section grows and is the ONLY scroll
-   region (the page stays pinned — see .app__body). The input row + quick chips
-   + hint are pinned beneath it. The whole column never scrolls as a unit. */
+   A REAL terminal (xterm.js) wired to a native PTY. The TERM body does NOT
+   page-scroll — the page stays pinned (see .app__body) while xterm manages its
+   own scrollback inside .term__xterm. The whole column never scrolls as a unit;
+   only the .xterm-viewport (styled by xterm.css) scrolls internally. */
 .term {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* Fill the scrollable body so the scrollback can flex-grow to the bottom. */
+  /* Fill the scrollable body so the xterm container can flex-grow to bottom. */
   height: 100%;
 }
 .term__panel {
@@ -249,49 +250,37 @@ html, body, #root {
   flex-direction: column;
 }
 /* The Panel body wrapper grows to fill the Panel and lets its child shrink so
-   the inner scroll region — not the page — is what scrolls. */
+   the xterm container — not the page — is what fills + scrolls internally. */
 .term__panel .pip-panel__body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-/* The inner scroll region — only this scrolls. */
-.term__scroll {
-  min-height: 0;
-  max-height: 46vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-.term__lines {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.term__line {
-  font-family: var(--pip-font-mono, ui-monospace, monospace);
-  line-height: 1.35;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.term__line--cmd { margin-top: 6px; }
-.term__quick {
+/* Quick-command chips + CLEAR/KILL, pinned above the terminal. */
+.term__toolbar {
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 10px;
+  margin-bottom: 10px;
 }
-.term__inputrow {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-top: 10px;
+/* The xterm container MUST have a real pixel size so FitAddon can measure it:
+   flex:1 + min-height:0 lets it fill the panel body without growing the page.
+   Don't override xterm's own colours/viewport styles (from term/xterm.css);
+   we only own the box sizing here. */
+.term__xterm {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
-.term__input { flex: 1 1 auto; min-width: 0; }
-.term__inputrow > .pip-button,
-.term__inputrow > button { flex: 0 0 auto; }
-.term__hint { margin-top: 8px; }
+/* Make xterm's own root fill the sized container in both axes. */
+.term__xterm .xterm,
+.term__xterm .xterm-viewport,
+.term__xterm .xterm-screen {
+  width: 100%;
+  height: 100%;
+}
 
 /* -------------------------------------------------- notification popups -----
    Fixed top overlay layer above .app, below the Modal (z 1000). The layer is
@@ -339,12 +328,19 @@ html, body, #root {
 }
 .notif-pop__close {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 8px;
+  right: 8px;
+  line-height: 1;
+  z-index: 1;
 }
-
-@media (max-height: 520px) {
-  .term__scroll { max-height: 38vh; }
+/* Compact, square close button that stays inside the panel frame (its border
+   was overflowing the panel edge with the default button padding). */
+.notif-pop__close .pip-btn,
+.notif-pop__close button {
+  padding: 2px 8px;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 /* ---------------------------------------------------------------- tabs fit ---
