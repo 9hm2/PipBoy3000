@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private val corePermissions = arrayOf(
         Manifest.permission.READ_CALL_LOG,
         Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_SMS,
         Manifest.permission.CALL_PHONE,
         Manifest.permission.READ_PHONE_STATE,
     )

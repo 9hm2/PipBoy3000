@@ -271,6 +271,147 @@ class LauncherBridge(
     }
 
     // ---------------------------------------------------------------------
+    // SMS
+    // ---------------------------------------------------------------------
+
+    /**
+     * JSON array of recent SMS, newest first, up to [limit] (clamped 1..500).
+     * Each: {"address","name","body","date":Long,"type":"INBOX"|"SENT"|...,"read":Bool}.
+     * The contact name is resolved (cached) when READ_CONTACTS is also granted.
+     * Requires READ_SMS; returns "[]" if denied or on error.
+     */
+    @JavascriptInterface
+    fun getSms(limit: Int): String {
+        if (!hasPermission(android.Manifest.permission.READ_SMS)) return "[]"
+        val clamped = limit.coerceIn(1, 500)
+        return try {
+            val arr = JSONArray()
+            val nameCache = HashMap<String, String>()
+            val projection = arrayOf(
+                android.provider.Telephony.Sms.ADDRESS,
+                android.provider.Telephony.Sms.BODY,
+                android.provider.Telephony.Sms.DATE,
+                android.provider.Telephony.Sms.TYPE,
+                android.provider.Telephony.Sms.READ,
+            )
+            activity.contentResolver.query(
+                android.provider.Telephony.Sms.CONTENT_URI,
+                projection,
+                null,
+                null,
+                android.provider.Telephony.Sms.DATE + " DESC",
+            )?.use { c ->
+                val addrIdx = c.getColumnIndex(android.provider.Telephony.Sms.ADDRESS)
+                val bodyIdx = c.getColumnIndex(android.provider.Telephony.Sms.BODY)
+                val dateIdx = c.getColumnIndex(android.provider.Telephony.Sms.DATE)
+                val typeIdx = c.getColumnIndex(android.provider.Telephony.Sms.TYPE)
+                val readIdx = c.getColumnIndex(android.provider.Telephony.Sms.READ)
+                var count = 0
+                while (c.moveToNext() && count < clamped) {
+                    val address = if (addrIdx >= 0) c.getString(addrIdx) ?: "" else ""
+                    val body = if (bodyIdx >= 0) c.getString(bodyIdx) ?: "" else ""
+                    val date = if (dateIdx >= 0) c.getLong(dateIdx) else 0L
+                    val type = if (typeIdx >= 0) c.getInt(typeIdx) else -1
+                    val read = if (readIdx >= 0) c.getInt(readIdx) != 0 else true
+                    arr.put(
+                        JSONObject()
+                            .put("address", address)
+                            .put("name", lookupContactName(address, nameCache))
+                            .put("body", body)
+                            .put("date", date)
+                            .put("type", smsTypeName(type))
+                            .put("read", read)
+                    )
+                    count++
+                }
+            }
+            arr.toString()
+        } catch (e: SecurityException) {
+            "[]"
+        } catch (e: Exception) {
+            "[]"
+        }
+    }
+
+    private fun smsTypeName(type: Int): String = when (type) {
+        android.provider.Telephony.Sms.MESSAGE_TYPE_INBOX -> "INBOX"
+        android.provider.Telephony.Sms.MESSAGE_TYPE_SENT -> "SENT"
+        android.provider.Telephony.Sms.MESSAGE_TYPE_DRAFT -> "DRAFT"
+        android.provider.Telephony.Sms.MESSAGE_TYPE_OUTBOX -> "OUTBOX"
+        android.provider.Telephony.Sms.MESSAGE_TYPE_FAILED -> "FAILED"
+        android.provider.Telephony.Sms.MESSAGE_TYPE_QUEUED -> "QUEUED"
+        else -> "UNKNOWN"
+    }
+
+    /** Resolve a contact display name for a phone number (cached); "" if unknown. */
+    private fun lookupContactName(number: String, cache: HashMap<String, String>): String {
+        if (number.isEmpty()) return ""
+        cache[number]?.let { return it }
+        if (!hasPermission(android.Manifest.permission.READ_CONTACTS)) {
+            cache[number] = ""
+            return ""
+        }
+        var name = ""
+        try {
+            val uri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(number),
+            )
+            activity.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { c ->
+                if (c.moveToFirst()) name = c.getString(0) ?: ""
+            }
+        } catch (e: Exception) {
+            name = ""
+        }
+        cache[number] = name
+        return name
+    }
+
+    /** Open the messaging app composed to [address]. Never requires permission. */
+    @JavascriptInterface
+    fun openSms(address: String): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(address)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Network throughput (for the live speed indicator)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Cumulative byte counters since boot, for computing live up/down speed.
+     * The web UI samples this on an interval and divides the delta by elapsed time.
+     * {"rxBytes","txBytes","mobileRxBytes","mobileTxBytes","timestamp"} — never throws.
+     */
+    @JavascriptInterface
+    fun getTraffic(): String {
+        return try {
+            fun safe(v: Long): Long = if (v < 0) 0L else v   // UNSUPPORTED == -1
+            JSONObject()
+                .put("rxBytes", safe(android.net.TrafficStats.getTotalRxBytes()))
+                .put("txBytes", safe(android.net.TrafficStats.getTotalTxBytes()))
+                .put("mobileRxBytes", safe(android.net.TrafficStats.getMobileRxBytes()))
+                .put("mobileTxBytes", safe(android.net.TrafficStats.getMobileTxBytes()))
+                .put("timestamp", SystemClock.elapsedRealtime())
+                .toString()
+        } catch (e: Exception) {
+            "{}"
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // Dialer / calls
     // ---------------------------------------------------------------------
 
@@ -410,6 +551,7 @@ class LauncherBridge(
             JSONObject()
                 .put("callLog", hasPermission(android.Manifest.permission.READ_CALL_LOG))
                 .put("contacts", hasPermission(android.Manifest.permission.READ_CONTACTS))
+                .put("sms", hasPermission(android.Manifest.permission.READ_SMS))
                 .put("phone", hasPermission(android.Manifest.permission.CALL_PHONE))
                 .toString()
         } catch (e: Exception) {
