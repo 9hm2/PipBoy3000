@@ -1,57 +1,123 @@
-/* Layout GLUE ONLY. Colors/borders/fonts come from the design system tokens. */
+/* Layout GLUE + a responsive scaling layer. Colors/borders/fonts/effects come
+   from the design system tokens; here we only re-scale the size tokens so the
+   whole UI adapts to any display ("teljes igazodas a kijelzo merethez"). */
 
-html, body { height: 100%; }
-body { margin: 0; }
+/* -------------------------------------------------- responsive token layer --
+   A viewport-tied unit drives clamp() ranges that keep current proportions but
+   shrink on small phones (~320px) and grow modestly on tablets. Only size and
+   spacing tokens are overridden; tracking, colors and effects are untouched. */
+.pip-root {
+  --u: min(2.7vw, 2.7vh);
+  --pip-fs-xs: clamp(9px, calc(0.72 * var(--u) + 6px), 13px);
+  --pip-fs-sm: clamp(11px, calc(0.85 * var(--u) + 7px), 15px);
+  --pip-fs-base: clamp(12px, calc(1 * var(--u) + 8px), 17px);
+  --pip-fs-lg: clamp(14px, calc(1.2 * var(--u) + 9px), 21px);
+  --pip-fs-xl: clamp(18px, calc(1.6 * var(--u) + 11px), 28px);
+  --pip-fs-2xl: clamp(22px, calc(2.1 * var(--u) + 13px), 38px);
+  --pip-fs-3xl: clamp(28px, calc(2.8 * var(--u) + 16px), 52px);
+  --pip-space-1: clamp(3px, calc(0.3 * var(--u) + 2px), 5px);
+  --pip-space-2: clamp(5px, calc(0.6 * var(--u) + 4px), 10px);
+  --pip-space-3: clamp(8px, calc(0.9 * var(--u) + 5px), 15px);
+  --pip-space-4: clamp(10px, calc(1.2 * var(--u) + 7px), 20px);
+  --pip-space-5: clamp(13px, calc(1.7 * var(--u) + 9px), 30px);
+  --pip-space-6: clamp(18px, calc(2.3 * var(--u) + 12px), 40px);
+  --pip-space-7: clamp(26px, calc(3.4 * var(--u) + 16px), 60px);
+}
 
-#root { height: 100vh; }
+/* --- Lock the page: it must NEVER scroll or bounce in either axis. ---------
+   The document is pinned to the viewport; only .app__body scrolls internally.
+   100dvh (with 100vh fallback) is the source of truth for the locked height so
+   chrome + tabs + first content fit without the page ever scrolling. */
+html, body, #root {
+  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  margin: 0;
+  overflow: hidden;          /* no page scroll, either axis */
+  position: fixed;           /* pin to viewport — kills overscroll/bounce */
+  inset: 0;
+  width: 100%;
+  overscroll-behavior: none; /* no rubber-band / chained scroll on the page */
+  -webkit-tap-highlight-color: transparent;
+}
 
-/* Make the Screen fill the viewport so the green terminal covers everything.
-   The design system applies .pip-root / .pip-screen / .pip-screen__inner. */
-#root > .pip-screen { height: 100vh; }
+/* Make the Screen fill the locked viewport so the green terminal covers
+   everything. The design system applies .pip-root / .pip-screen /
+   .pip-screen__inner; .pip-screen already has padding + overflow:hidden. */
+#root > .pip-screen {
+  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-width: 100%;
+  /* .pip-screen carries the DS padding (var(--pip-space-5)); border-box keeps
+     that padding INSIDE the locked height so the screen never exceeds 100dvh.
+     (The DS only applies border-box to .pip-root *descendants*, not this node.) */
+  box-sizing: border-box;
+  overflow: hidden;          /* never let the screen itself scroll */
+}
 .pip-screen > .pip-screen__inner {
   height: 100%;
   display: flex;
   flex-direction: column;
-  /* respect notches / system bars */
+  min-width: 0;              /* flex child must be allowed to shrink */
+  overflow: hidden;
+  box-sizing: border-box;
+  /* Respect notches / cutouts. The top status bar is hidden by the app
+     (immersive), so inset-top is ~0; we still honour it if nonzero.
+     The bottom navigation-bar inset is applied to the scroll area instead so
+     the last list row clears the Android nav bar — see .app__body. */
   padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
-  box-sizing: border-box;
 }
 
-/* App shell: fixed chrome (system bar + tabs), single scrollable body */
+/* App shell: fixed chrome (system bar + tabs) + single scrollable body.
+   min-height:0 on the column and the scroll child lets overflow actually work
+   instead of forcing the column to grow past the viewport. */
 .app {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: 0; /* allow children to shrink so overflow works */
+  min-height: 0;             /* allow children to shrink so overflow works */
+  min-width: 0;
+  overflow-x: hidden;        /* nothing may overflow horizontally */
 }
-.app__chrome { flex: 0 0 auto; }
-.app__tabs { flex: 0 0 auto; margin-top: 10px; }
+.app__chrome { flex: 0 0 auto; min-width: 0; }
+.app__tabs { flex: 0 0 auto; margin-top: 10px; min-width: 0; }
+/* THE ONLY scrollable element. */
 .app__body {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 0;             /* critical: lets the flex child scroll, not grow */
+  min-width: 0;
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
+  overscroll-behavior: contain;       /* keep scroll from chaining to the page */
+  -webkit-overflow-scrolling: touch;  /* momentum scroll on iOS/WebView */
   padding-top: 12px;
+  /* Clear the Android navigation bar so the last row isn't hidden behind it. */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Vertical stacking of sections with breathing room */
 .stack > * + * { margin-top: 12px; }
 
-/* System bar: clock identity on the left, vitals chips on the right */
+/* System bar: clock identity on the left, vitals chips on the right.
+   Wraps on narrow widths so nothing is clipped. */
 .sysbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
-.sysbar__clock { flex: 0 0 auto; }
+.sysbar__clock { flex: 0 0 auto; min-width: 0; }
+/* The big clock scales with the smaller viewport axis so it never wraps or
+   overflows in portrait OR landscape. */
 .sysbar__clock .pip-heading {
-  font-size: clamp(2rem, 9vw, 3rem);
+  font-size: clamp(1.8rem, min(9vw, 11vh), 3rem);
   line-height: 1;
   margin: 0;
+  white-space: nowrap;
 }
 .sysbar__vitals {
   flex: 1 1 auto;
@@ -64,7 +130,11 @@ body { margin: 0; }
   cursor: pointer;
   text-align: right;
 }
-.sysbar__vitals .pip-status-bar { justify-content: flex-end; }
+/* Vitals chips wrap gracefully rather than forcing horizontal overflow. */
+.sysbar__vitals .pip-status-bar {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
 
 /* Shared list rows (apps / contacts / call log / notifications) */
 .rows > * + * { margin-top: 4px; }
@@ -110,12 +180,15 @@ body { margin: 0; }
   white-space: nowrap;
 }
 
-/* Three-column grid for shortcut buttons (RADIO) */
+/* Responsive grid for shortcut buttons (RADIO) and any shortcut grids.
+   auto-fit + minmax keeps ~3 columns on phones and grows to more on tablets,
+   collapsing to fewer on very narrow screens — never overflowing horizontally. */
 .grid-3 {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 92px), 1fr));
   gap: 8px;
 }
+.grid-3 > * { min-width: 0; }
 
 /* RADIO system-access rows */
 .access-row {
@@ -134,3 +207,23 @@ body { margin: 0; }
 /* Generic key/value text row inside readout panels */
 .kv { display: flex; justify-content: space-between; gap: 12px; }
 .kv > :last-child { text-align: right; }
+
+/* --------------------------------------------------------- landscape / short.
+   When vertical space is scarce (landscape phones), compact the chrome: shrink
+   the clock and tighten the tab gap so chrome + tabs + first content still fit
+   without the chrome being pushed off-screen. */
+@media (max-height: 520px) {
+  .pip-screen { padding: var(--pip-space-3); }
+  .sysbar__clock .pip-heading {
+    font-size: clamp(1.4rem, 7vh, 2.2rem);
+  }
+  .app__tabs { margin-top: 6px; }
+  .app__body { padding-top: 8px; }
+}
+
+/* Very narrow widths: let the clock and vitals each take a full row. */
+@media (max-width: 340px) {
+  .sysbar { justify-content: center; }
+  .sysbar__vitals { text-align: center; flex-basis: 100%; }
+  .sysbar__vitals .pip-status-bar { justify-content: center; }
+}

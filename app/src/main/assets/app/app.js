@@ -5,7 +5,7 @@
  * Information architecture (one function = one place):
  *   CHROME  : system bar (clock + BAT/SIG/NOTIF vitals chips) + main Tabs.
  *   APPS    : favorites dock, frequent strip, the ONLY search box, all apps.
- *   DATA    : CALL LOG | CONTACTS | NOTIFS (the ONLY comms/feeds surface).
+ *   DATA    : CALL LOG | SMS | CONTACTS | NOTIFS (the ONLY comms/feeds surface).
  *   STAT    : read-only readouts (vitals, network, audio, display, system).
  *   RADIO   : the ONLY controls/settings/system-access surface.
  */
@@ -91,7 +91,18 @@
     return callJson("getDeviceStats", [], null);
   }
   function getPermissions() {
-    return callJson("getPermissions", [], { callLog: false, contacts: false, phone: false });
+    return callJson("getPermissions", [], {
+      callLog: false,
+      contacts: false,
+      phone: false,
+      sms: false,
+    });
+  }
+  function getSms(limit) {
+    return callJson("getSms", [limit], []);
+  }
+  function getTraffic() {
+    return callJson("getTraffic", [], null);
   }
   function getUsageStats(limit) {
     return callJson("getUsageStats", [limit], []);
@@ -126,6 +137,9 @@
   }
   function dial(num) {
     callBool("dial", [num]);
+  }
+  function openSms(address) {
+    callBool("openSms", [address]);
   }
   function requestPermissions() {
     callBool("requestPermissions", []);
@@ -208,6 +222,38 @@
     return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + " " + units[i];
   }
 
+  // Human-readable transfer rate (bytes/second).
+  function formatSpeed(bytesPerSec) {
+    if (bytesPerSec == null || isNaN(bytesPerSec) || bytesPerSec < 0) return "0";
+    var n = Number(bytesPerSec);
+    if (n < 1) return "0";
+    var units = ["B/s", "KB/s", "MB/s", "GB/s"];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) {
+      n /= 1024;
+      i++;
+    }
+    return (n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)) + " " + units[i];
+  }
+
+  // Run an action that opens/launches/navigates externally, then drop focus so
+  // the tapped control does not stay visually "lit" (focus glow / active state).
+  function act(fn) {
+    return function () {
+      try {
+        if (typeof fn === "function") fn.apply(null, arguments);
+      } finally {
+        setTimeout(function () {
+          try {
+            if (document.activeElement && document.activeElement.blur) {
+              document.activeElement.blur();
+            }
+          } catch (e) {}
+        }, 0);
+      }
+    };
+  }
+
   function relativeTime(epochMs) {
     if (!epochMs) return "";
     var diff = Date.now() - Number(epochMs);
@@ -242,6 +288,25 @@
     return out.join(" ");
   }
 
+  // Local live clock — { time:"HH:MM", date:"YYYY-MM-DD DOW" }.
+  function clockNow() {
+    var d = new Date();
+    function p2(n) {
+      return (n < 10 ? "0" : "") + n;
+    }
+    var days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    var time = p2(d.getHours()) + ":" + p2(d.getMinutes());
+    var date =
+      d.getFullYear() +
+      "-" +
+      p2(d.getMonth() + 1) +
+      "-" +
+      p2(d.getDate()) +
+      " " +
+      days[d.getDay()];
+    return { time: time, date: date };
+  }
+
   function isMostlyDigits(q) {
     var t = (q || "").trim();
     if (!t) return false;
@@ -267,6 +332,22 @@
         return { marker: "☎", tone: "warning" };
       default:
         return { marker: "·", tone: "default" };
+    }
+  }
+
+  // Text marker for an SMS message direction.
+  function smsMarker(type) {
+    switch (type) {
+      case "SENT":
+      case "OUTBOX":
+      case "QUEUED":
+        return "▴";
+      case "FAILED":
+        return "✕";
+      case "DRAFT":
+        return "✎";
+      default:
+        return "▾"; // INBOX / UNKNOWN
     }
   }
 
@@ -559,10 +640,10 @@
         key: a.packageName,
         marker: "▸",
         primary: appLabelOf(a) + marks,
-        onClick: function () {
+        onClick: act(function () {
           if (lp.didFire()) return;
           onLaunch(a.packageName);
-        },
+        }),
         pressHandlers: pressHandlers,
       });
     }
@@ -591,9 +672,9 @@
                 key: a.packageName,
                 marker: "▸",
                 primary: (a.label || a.packageName).toUpperCase(),
-                onClick: function () {
+                onClick: act(function () {
                   onLaunch(a.packageName);
-                },
+                }),
               });
             })
           )
@@ -603,7 +684,7 @@
     } else {
       freqStrip = h(
         Button,
-        { variant: "warning", block: true, glow: false, onClick: openUsageAccessSettings },
+        { variant: "warning", block: true, glow: false, onClick: act(openUsageAccessSettings) },
         "ENABLE USAGE ACCESS"
       );
     }
@@ -618,9 +699,9 @@
             key: "__dial",
             marker: "☎",
             primary: "DIAL " + q,
-            onClick: function () {
+            onClick: act(function () {
               dial(q);
-            },
+            }),
           })
         );
       }
@@ -629,9 +710,9 @@
           key: "__web",
           marker: "⌕",
           primary: 'WEB SEARCH "' + q + '"',
-          onClick: function () {
+          onClick: act(function () {
             webSearch(q);
-          },
+          }),
         })
       );
       smartActions = h(Section, { title: "ACTIONS", variant: "inset" }, actions);
@@ -674,11 +755,12 @@
   }
 
   /* ============================================================ DATA screen */
-  // The ONLY comms/feeds surface: CALL LOG | CONTACTS | NOTIFS.
+  // The ONLY comms/feeds surface: CALL LOG | SMS | CONTACTS | NOTIFS.
   function DataScreen(props) {
     var perms = props.perms;
     var callLog = props.callLog;
     var contacts = props.contacts;
+    var sms = props.sms;
     var notifs = props.notifs;
     var notifAccess = props.notifAccess;
     var sub = props.dataTab;
@@ -687,6 +769,7 @@
 
     var subTabs = [
       { id: "calls", label: "CALL LOG" },
+      { id: "sms", label: "SMS" },
       { id: "contacts", label: "CONTACTS" },
       { id: "notifs", label: "NOTIFS" },
     ];
@@ -699,7 +782,16 @@
             title: "CALL LOG ACCESS REQUIRED",
             message: "Grant call-log permission to read recent calls.",
             actionLabel: "GRANT ACCESS",
-            onAction: requestPermissions,
+            onAction: act(requestPermissions),
+          });
+    } else if (sub === "sms") {
+      content = perms.sms
+        ? h(Sms, { messages: sms })
+        : h(PermissionGate, {
+            title: "SMS ACCESS REQUIRED",
+            message: "Grant SMS permission to read recent messages.",
+            actionLabel: "GRANT ACCESS",
+            onAction: act(requestPermissions),
           });
     } else if (sub === "contacts") {
       content = perms.contacts
@@ -708,7 +800,7 @@
             title: "CONTACTS ACCESS REQUIRED",
             message: "Grant contacts permission to read your address book.",
             actionLabel: "GRANT ACCESS",
-            onAction: requestPermissions,
+            onAction: act(requestPermissions),
           });
     } else {
       content = h(Notifs, { notifs: notifs, access: notifAccess, onDismiss: onDismiss });
@@ -722,6 +814,35 @@
     );
   }
 
+  function Sms(props) {
+    var messages = props.messages || [];
+    if (messages.length === 0) {
+      return h(Section, { variant: "inset" }, h(Text, { variant: "dim" }, "NO MESSAGES."));
+    }
+    return h(
+      "div",
+      { className: "rows" },
+      messages.map(function (m, i) {
+        var who = (m.name && m.name.length ? m.name : m.address || "UNKNOWN").toString().toUpperCase();
+        var unread = m.read === false && m.type === "INBOX";
+        var marker = (unread ? "• " : "") + smsMarker(m.type);
+        var tone = m.type === "FAILED" ? "danger" : "default";
+        var primary = unread ? who + " ●" : who;
+        return h(ListRow, {
+          key: m.address ? m.address + ":" + m.date + ":" + i : i,
+          marker: marker,
+          tone: tone,
+          primary: primary,
+          secondary: (m.body || "").toString().replace(/\s+/g, " "),
+          meta: relativeTime(m.date),
+          onClick: act(function () {
+            openSms(m.address);
+          }),
+        });
+      })
+    );
+  }
+
   function Notifs(props) {
     var notifs = props.notifs || [];
     var access = props.access;
@@ -732,7 +853,7 @@
         title: "NOTIFICATION ACCESS REQUIRED",
         message: "Grant notification access to view active notifications.",
         actionLabel: "GRANT NOTIFICATION ACCESS",
-        onAction: openNotificationAccessSettings,
+        onAction: act(openNotificationAccessSettings),
       });
     }
     if (notifs.length === 0) {
@@ -747,9 +868,9 @@
           ? {
               label: "✕",
               variant: "danger",
-              onClick: function () {
+              onClick: act(function () {
                 onDismiss(n.key);
-              },
+              }),
             }
           : null;
         return h(ListRow, {
@@ -758,9 +879,9 @@
           primary: n.title ? who + " · " + n.title : who,
           secondary: n.text || "",
           meta: n.time ? relativeTime(n.time) : "",
-          onClick: function () {
+          onClick: act(function () {
             openNotification(n.key);
-          },
+          }),
           action: action,
         });
       })
@@ -786,9 +907,9 @@
           primary: (title || "").toString().toUpperCase(),
           secondary: named ? c.number || "" : "",
           meta: relativeTime(c.date),
-          onClick: function () {
+          onClick: act(function () {
             dial(c.number);
-          },
+          }),
         });
       })
     );
@@ -833,9 +954,9 @@
             marker: "▸",
             primary: (c.name || c.number || "UNKNOWN").toUpperCase(),
             secondary: named ? c.number || "" : "",
-            onClick: function () {
+            onClick: act(function () {
               dial(c.number);
-            },
+            }),
           });
         })
       );
@@ -1040,7 +1161,7 @@
           : h(
               "div",
               { className: "access-row__btn" },
-              h(Button, { variant: "warning", glow: false, onClick: onEnable }, enableLabel)
+              h(Button, { variant: "warning", glow: false, onClick: act(onEnable) }, enableLabel)
             )
       );
     }
@@ -1058,6 +1179,13 @@
             var ok = setFlashlight(next);
             setFlashOn(ok ? next : flashOn);
             vibrate(10);
+            setTimeout(function () {
+              try {
+                if (document.activeElement && document.activeElement.blur) {
+                  document.activeElement.blur();
+                }
+              } catch (e) {}
+            }, 0);
           },
         }),
         h("div", { style: { height: 10 } }),
@@ -1067,9 +1195,9 @@
               id: p.id,
               label: p.label,
               variant: "primary",
-              onClick: function () {
+              onClick: act(function () {
                 openSettingsPanel(p.id);
-              },
+              }),
             };
           })
         )
@@ -1082,9 +1210,9 @@
             return {
               id: s[1],
               label: s[0],
-              onClick: function () {
+              onClick: act(function () {
                 openSettings(s[1]);
-              },
+              }),
             };
           })
         ),
@@ -1094,9 +1222,9 @@
           {
             variant: "primary",
             block: true,
-            onClick: function () {
+            onClick: act(function () {
               openSettings("settings");
-            },
+            }),
           },
           "SYSTEM SETTINGS"
         )
@@ -1128,6 +1256,8 @@
     var notifCount = props.notifCount;
     var onNotif = props.onNotif;
     var noBridge = props.noBridge;
+    var clock = props.clock; // { time, date } driven locally every 1s
+    var speed = props.speed; // { rx, tx } bytes/sec, or null
 
     var battery = stats ? stats.batteryPct : null;
     var charging = stats && stats.charging;
@@ -1154,11 +1284,21 @@
       }
     }
 
+    // NET chip: live up/down throughput.
+    var netVal = "—";
+    if (speed) {
+      netVal = "↓" + formatSpeed(speed.rx) + " ↑" + formatSpeed(speed.tx);
+    }
+
     var items = [
       statusItem("BAT", batVal, batteryTone(battery)),
       statusItem("SIG", sigVal, sigTone),
+      statusItem("NET", netVal, "default"),
       statusItem("NOTIF", String(notifCount || 0), "default"),
     ];
+
+    var timeStr = clock && clock.time ? clock.time : (stats && stats.time ? stats.time : "--:--");
+    var dateStr = clock && clock.date ? clock.date : (stats && stats.date ? stats.date : "----");
 
     return h(
       "div",
@@ -1166,12 +1306,12 @@
       h(
         "div",
         { className: "sysbar__clock" },
-        h(Heading, { level: 1 }, stats && stats.time ? stats.time : "--:--"),
-        h(Text, { variant: "dim", size: "sm" }, stats && stats.date ? stats.date : "----")
+        h(Heading, { level: 1 }, timeStr),
+        h(Text, { variant: "dim", size: "sm" }, dateStr)
       ),
       h(
         "button",
-        { type: "button", className: "sysbar__vitals", onClick: onNotif, "aria-label": "notifications" },
+        { type: "button", className: "sysbar__vitals", onClick: act(onNotif), "aria-label": "notifications" },
         h(StatusBar, { items: items }),
         noBridge
           ? h(Text, { as: "div", variant: "dim", size: "xs" }, "OFFLINE PREVIEW")
@@ -1201,7 +1341,8 @@
     var appsState = useState([]);
     var callLogState = useState([]);
     var contactsState = useState([]);
-    var permsState = useState({ callLog: false, contacts: false, phone: false });
+    var smsState = useState([]);
+    var permsState = useState({ callLog: false, contacts: false, phone: false, sms: false });
     var flashState = useState(false);
     var actionPkgState = useState(null);
 
@@ -1211,6 +1352,14 @@
     var netState = useState(null);
     var audioState = useState(null);
     var displayState = useState(null);
+
+    // Live local clock (1s) — independent of the 10s stats poll.
+    var clockState = useState(function () {
+      return clockNow();
+    });
+    // Live network throughput (computed from getTraffic samples on a 2s interval).
+    var speedState = useState(null);
+    var trafficRef = useRef(null);
 
     var favState = useState(function () {
       return lsGet(FAV_KEY, []);
@@ -1223,7 +1372,10 @@
     var apps = appsState[0], setApps = appsState[1];
     var callLog = callLogState[0], setCallLog = callLogState[1];
     var contacts = contactsState[0], setContacts = contactsState[1];
+    var sms = smsState[0], setSms = smsState[1];
     var perms = permsState[0], setPerms = permsState[1];
+    var clock = clockState[0], setClock = clockState[1];
+    var speed = speedState[0], setSpeed = speedState[1];
     var actionPkg = actionPkgState[0], setActionPkg = actionPkgState[1];
     var usage = usageState[0], setUsage = usageState[1];
     var notifs = notifsState[0], setNotifs = notifsState[1];
@@ -1265,16 +1417,41 @@
       setPerms(p);
       setCallLog(p.callLog ? getCallLog(100) : []);
       setContacts(p.contacts ? getContacts() : []);
+      setSms(p.sms ? getSms(80) : []);
       refreshLazy();
       refreshNetwork();
       if (tabRef.current === "stat") refreshStatDetail();
     }, [refreshLazy, refreshNetwork, refreshStatDetail]);
 
-    // Lightweight poll for the live clock / battery / signal chips.
+    // Lightweight poll for battery / signal chips.
     var refreshStats = useCallback(function () {
       var s = getDeviceStats();
       if (s) setStats(s);
       setNet(getNetworkInfo());
+    }, []);
+
+    // Sample cumulative traffic counters; derive a per-second rate vs the prior
+    // sample. Skip the first tick (no baseline) and ignore counter resets.
+    var tickTraffic = useCallback(function () {
+      var t = getTraffic();
+      if (!t || t.timestamp == null) {
+        return;
+      }
+      var prev = trafficRef.current;
+      trafficRef.current = t;
+      if (!prev) {
+        return; // first sample establishes the baseline
+      }
+      var dt = (Number(t.timestamp) - Number(prev.timestamp)) / 1000;
+      if (!(dt > 0)) {
+        return;
+      }
+      var dRx = Number(t.rxBytes) - Number(prev.rxBytes);
+      var dTx = Number(t.txBytes) - Number(prev.txBytes);
+      setSpeed({
+        rx: Math.max(0, dRx) / dt,
+        tx: Math.max(0, dTx) / dt,
+      });
     }, []);
 
     useEffect(
@@ -1284,13 +1461,19 @@
           refreshAll();
         }
         window.addEventListener("pipboy:refresh", onRefresh);
-        var iv = setInterval(refreshStats, 10000);
+        var ivStats = setInterval(refreshStats, 10000);
+        var ivClock = setInterval(function () {
+          setClock(clockNow());
+        }, 1000);
+        var ivTraffic = setInterval(tickTraffic, 2000);
         return function () {
           window.removeEventListener("pipboy:refresh", onRefresh);
-          clearInterval(iv);
+          clearInterval(ivStats);
+          clearInterval(ivClock);
+          clearInterval(ivTraffic);
         };
       },
-      [refreshAll, refreshStats]
+      [refreshAll, refreshStats, tickTraffic]
     );
 
     // When switching into STAT, fetch the heavier network/audio/display data.
@@ -1354,6 +1537,7 @@
         perms: perms,
         callLog: callLog,
         contacts: contacts,
+        sms: sms,
         notifs: notifs,
         notifAccess: access && access.notificationAccess,
         dataTab: dataTabState[0],
@@ -1492,6 +1676,8 @@
             notifCount: notifCount,
             onNotif: goNotifs,
             noBridge: !hasBridge(),
+            clock: clock,
+            speed: speed,
           }),
           h(
             "div",
