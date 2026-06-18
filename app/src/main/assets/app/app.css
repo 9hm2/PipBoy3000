@@ -24,6 +24,17 @@
   --pip-space-7: clamp(26px, calc(3.4 * var(--u) + 16px), 60px);
 }
 
+/* --- Reach the display edges -----------------------------------------------
+   The DS gives .pip-screen a large horizontal gutter (var(--pip-space-5)).
+   Pull the LEFT/RIGHT padding in so content reaches the screen edges; only a
+   tiny legibility gutter remains. Cutouts are still respected via the
+   safe-area insets applied to .pip-screen__inner. Top/bottom stay as the DS
+   sets them. border-box keeps the reduced padding inside the locked height. */
+#root > .pip-screen {
+  padding-left: 7px;
+  padding-right: 7px;
+}
+
 /* --- Lock the page: it must NEVER scroll or bounce in either axis. ---------
    The document is pinned to the viewport; only .app__body scrolls internally.
    100dvh (with 100vh fallback) is the source of truth for the locked height so
@@ -284,6 +295,18 @@ html, body, #root {
   /* Fill the scrollable body so the xterm container can flex-grow to bottom. */
   height: 100%;
 }
+/* Sit the terminal window bottom close to the keyboard top: trim the panel +
+   body bottom spacing so the xterm extends near the bottom of the host. */
+.term__panel { margin-bottom: 0; }
+.term__panel .pip-panel__body {
+  padding-bottom: 4px;
+}
+/* The persistent host carries the terminal; drop the .app__body bottom gap
+   when the host is shown so there's minimal space above the keyboard.
+   (Locked-scroll is unaffected: xterm still owns its internal scroll.) */
+.app__body > .term-host {
+  margin-bottom: 0;
+}
 .term__panel {
   flex: 1 1 auto;
   min-height: 0;
@@ -447,3 +470,95 @@ html, body, #root {
 @media (min-width: 700px) and (min-height: 640px) {
   .sysbar__clock .pip-heading { font-size: clamp(2.2rem, 7vw, 3.4rem); }
 }
+
+/* ---------------------------------------------------------------- DIALER ----
+   A 3x4 dialpad of tappable keys. Layout/box only; colours come from tokens. */
+.dialer__display {
+  text-align: center;
+  min-height: 1.6em;
+  padding: 4px 8px;
+}
+.dialer__actions {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.dialer__actions > :first-child { flex: 1 1 auto; }
+.dialer__actions > :last-child { flex: 0 0 auto; }
+
+.dialpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.dialpad__key {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  gap: 2px;
+  background: transparent;
+  border: var(--pip-border-w, 1px) solid var(--pip-border, #155f2c);
+  border-radius: var(--pip-radius, 4px);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.dialpad__key:active { background: var(--pip-bg-elevated, #112018); }
+.dialpad__digit {
+  font-size: var(--pip-fs-lg);
+  line-height: 1;
+  color: var(--pip-text-bright);
+}
+.dialpad__sub {
+  font-size: var(--pip-fs-xs);
+  letter-spacing: 0.12em;
+  opacity: 0.6;
+}
+
+/* ------------------------------------------------------------- IN-CALL UI ---
+   A fixed full-screen Pip-Boy overlay above the tabs (like the Modal layer)
+   shown whenever a call is not IDLE. Scrollable if controls overflow. */
+.incall {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pip-space-4);
+  padding-top: calc(var(--pip-space-4) + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(var(--pip-space-4) + env(safe-area-inset-bottom, 0px));
+  background: var(--pip-bg-scrim, rgba(4, 10, 7, 0.92));
+  box-sizing: border-box;
+}
+.incall__panel {
+  width: 100%;
+  max-width: 420px;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.incall__who { margin: 0; text-align: center; }
+.incall__status { text-align: center; font-variant-numeric: tabular-nums; }
+.incall__answer { display: flex; flex-direction: column; gap: 10px; }
+.incall__controls { display: flex; flex-direction: column; }
+.incall__toggles {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 12px;
+}
+.incall__keypad { margin-top: 12px; }
+
+/* --------------------------------------------------------- SMS reply row ----
+   Bottom compose row inside the SMS thread view: input + SEND button. */
+.sms-reply {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.sms-reply__input { flex: 1 1 auto; min-width: 0; }
+.sms-reply__send { flex: 0 0 auto; }
+/* Default-app banners are slim. */
+.sms-default, .dialer-default { margin: 0; }

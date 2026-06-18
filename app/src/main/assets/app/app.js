@@ -177,6 +177,59 @@
   function vibrate(ms) {
     callBool("vibrate", [ms]);
   }
+
+  /* --------------------------------------------- new bridge wrappers (A/B) */
+  // Soft keyboard (terminal focus).
+  function showKeyboard() {
+    callBool("showKeyboard", []);
+  }
+  function hideKeyboard() {
+    callBool("hideKeyboard", []);
+  }
+  // Default-SMS app + send.
+  function sendSms(address, body) {
+    return callBool("sendSms", [address, body]);
+  }
+  function isDefaultSmsApp() {
+    return callBool("isDefaultSmsApp", []);
+  }
+  function requestDefaultSmsApp() {
+    callBool("requestDefaultSmsApp", []);
+  }
+  // Default-dialer + in-call controls.
+  function isDefaultDialer() {
+    return callBool("isDefaultDialer", []);
+  }
+  function requestDefaultDialer() {
+    callBool("requestDefaultDialer", []);
+  }
+  function callPlace(number) {
+    return callBool("callPlace", [number]);
+  }
+  function callAnswer() {
+    return callBool("callAnswer", []);
+  }
+  function callHangup() {
+    return callBool("callHangup", []);
+  }
+  function callReject() {
+    return callBool("callReject", []);
+  }
+  function callMute(on) {
+    return callBool("callMute", [on]);
+  }
+  function callSpeaker(on) {
+    return callBool("callSpeaker", [on]);
+  }
+  function callHold(on) {
+    return callBool("callHold", [on]);
+  }
+  function callDtmf(s) {
+    return callBool("callDtmf", [s]);
+  }
+  function getCallState() {
+    return callJson("getCallState", [], { state: "IDLE" });
+  }
   /* ------------------------------------------------------------- storage */
   function lsGet(key, fallback) {
     try {
@@ -685,13 +738,13 @@
         )
       : null;
 
-    // ---- frequent strip ----
+    // ---- recent apps strip (usage ordered by last-used == recents) ----
     var freqStrip = null;
     if (access && access.usageAccess) {
       if (freqApps.length) {
         freqStrip = h(
           Section,
-          { title: "FREQUENT", variant: "inset" },
+          { title: "RECENT", variant: "inset" },
           h(
             "div",
             { className: "dock" },
@@ -794,8 +847,11 @@
     var sub = props.dataTab;
     var setSub = props.setDataTab;
     var onDismiss = props.onDismiss;
+    var onPlaceCall = props.onPlaceCall;
+    var smsNonce = props.smsNonce;
 
     var subTabs = [
+      { id: "dialer", label: "DIALER" },
       { id: "calls", label: "CALL LOG" },
       { id: "sms", label: "SMS" },
       { id: "contacts", label: "CONTACTS" },
@@ -803,9 +859,11 @@
     ];
 
     var content;
-    if (sub === "calls") {
+    if (sub === "dialer") {
+      content = h(Dialer, { onPlaceCall: onPlaceCall });
+    } else if (sub === "calls") {
       content = perms.callLog
-        ? h(CallLog, { entries: callLog })
+        ? h(CallLog, { entries: callLog, onPlaceCall: onPlaceCall })
         : h(PermissionGate, {
             title: "CALL LOG ACCESS REQUIRED",
             message: "Grant call-log permission to read recent calls.",
@@ -814,7 +872,7 @@
           });
     } else if (sub === "sms") {
       content = perms.sms
-        ? h(Sms, { messages: sms })
+        ? h(Sms, { messages: sms, smsNonce: smsNonce })
         : h(PermissionGate, {
             title: "SMS ACCESS REQUIRED",
             message: "Grant SMS permission to read recent messages.",
@@ -823,7 +881,7 @@
           });
     } else if (sub === "contacts") {
       content = perms.contacts
-        ? h(Contacts, { contacts: contacts })
+        ? h(Contacts, { contacts: contacts, onPlaceCall: onPlaceCall })
         : h(PermissionGate, {
             title: "CONTACTS ACCESS REQUIRED",
             message: "Grant contacts permission to read your address book.",
@@ -847,16 +905,45 @@
   // external messaging app is launched.
   function Sms(props) {
     var messages = props.messages || [];
+    var smsNonce = props.smsNonce;
 
-    // Selected thread state: { threadId, title } or null for the LIST view.
+    // Selected thread state: { threadId, title, address } or null for LIST view.
     var openState = useState(null);
     var open = openState[0];
     var setOpen = openState[1];
+
+    // Whether we are the default SMS app (controls the SET-DEFAULT banner).
+    var defState = useState(function () {
+      return isDefaultSmsApp();
+    });
+    var isDefault = defState[0];
+    var setIsDefault = defState[1];
+    useEffect(
+      function () {
+        setIsDefault(isDefaultSmsApp());
+        return undefined;
+      },
+      [smsNonce]
+    );
+
+    var banner = isDefault
+      ? null
+      : h(
+          Section,
+          { variant: "inset", className: "sms-default" },
+          h(
+            Button,
+            { variant: "warning", block: true, glow: false, onClick: act(requestDefaultSmsApp) },
+            "SET AS DEFAULT SMS APP"
+          )
+        );
 
     if (open) {
       return h(SmsThread, {
         threadId: open.threadId,
         title: open.title,
+        address: open.address,
+        smsNonce: smsNonce,
         onBack: function () {
           setOpen(null);
         },
@@ -864,9 +951,18 @@
     }
 
     if (messages.length === 0) {
-      return h(Section, { variant: "inset" }, h(Text, { variant: "dim" }, "NO MESSAGES."));
+      return h(
+        "div",
+        { className: "stack" },
+        banner,
+        h(Section, { variant: "inset" }, h(Text, { variant: "dim" }, "NO MESSAGES."))
+      );
     }
     return h(
+      "div",
+      { className: "stack" },
+      banner,
+      h(
       "div",
       { className: "rows" },
       messages.map(function (m, i) {
@@ -883,10 +979,11 @@
           secondary: (m.body || "").toString().replace(/\s+/g, " "),
           meta: relativeTime(m.date),
           onClick: act(function () {
-            setOpen({ threadId: m.threadId, title: who });
+            setOpen({ threadId: m.threadId, title: who, address: m.address });
           }),
         });
       })
+      )
     );
   }
 
@@ -897,28 +994,82 @@
     var threadId = props.threadId;
     var title = props.title || "UNKNOWN";
     var onBack = props.onBack;
+    var smsNonce = props.smsNonce;
 
     var listState = useState([]);
     var list = listState[0];
     var setList = listState[1];
 
-    useEffect(
+    // Reply draft text.
+    var draftState = useState("");
+    var draft = draftState[0];
+    var setDraft = draftState[1];
+
+    var reload = useCallback(
       function () {
         if (threadId == null) {
           setList([]);
-          return undefined;
+          return;
         }
         setList(getSmsThread(String(threadId), 500) || []);
-        return undefined;
       },
       [threadId]
     );
+
+    useEffect(
+      function () {
+        reload();
+        return undefined;
+      },
+      [reload, smsNonce]
+    );
+
+    // Recipient address: prefer the prop, else the newest message's address.
+    var address = props.address;
+    if (!address && list && list.length) {
+      for (var ai = list.length - 1; ai >= 0; ai--) {
+        if (list[ai] && list[ai].address) {
+          address = list[ai].address;
+          break;
+        }
+      }
+    }
+
+    function doSend() {
+      var body = (draft || "").trim();
+      if (!body || !address) return;
+      sendSms(address, body);
+      setDraft("");
+      setTimeout(reload, 300);
+    }
 
     var header = h(
       "div",
       { className: "sms-thread__head" },
       h(Button, { variant: "ghost", glow: false, onClick: act(onBack) }, "< BACK"),
       h(Text, { as: "span", variant: "bright", size: "sm", className: "ellipsis" }, title)
+    );
+
+    var replyRow = h(
+      "div",
+      { className: "sms-reply" },
+      h(Input, {
+        className: "sms-reply__input",
+        placeholder: address ? "message…" : "no address",
+        value: draft,
+        onChange: function (e) {
+          setDraft(e.target.value);
+        },
+      }),
+      h(
+        "div",
+        { className: "sms-reply__send" },
+        h(
+          Button,
+          { variant: "primary", glow: false, onClick: act(doSend) },
+          "SEND"
+        )
+      )
     );
 
     var bodyChildren;
@@ -942,7 +1093,9 @@
       { variant: "inset" },
       header,
       h("div", { style: { height: 10 } }),
-      h("div", { className: "sms-thread" }, bodyChildren)
+      h("div", { className: "sms-thread" }, bodyChildren),
+      h("div", { style: { height: 10 } }),
+      replyRow
     );
   }
 
@@ -993,6 +1146,7 @@
 
   function CallLog(props) {
     var entries = props.entries || [];
+    var onPlaceCall = props.onPlaceCall || dial;
     if (entries.length === 0) {
       return h(Section, { variant: "inset" }, h(Text, { variant: "dim" }, "NO RECENT CALLS."));
     }
@@ -1011,7 +1165,7 @@
           secondary: named ? c.number || "" : "",
           meta: relativeTime(c.date),
           onClick: act(function () {
-            dial(c.number);
+            onPlaceCall(c.number);
           }),
         });
       })
@@ -1020,6 +1174,7 @@
 
   function Contacts(props) {
     var contacts = props.contacts || [];
+    var onPlaceCall = props.onPlaceCall || dial;
     var queryState = useState("");
     var query = queryState[0];
     var setQuery = queryState[1];
@@ -1058,7 +1213,7 @@
             primary: (c.name || c.number || "UNKNOWN").toUpperCase(),
             secondary: named ? c.number || "" : "",
             onClick: act(function () {
-              dial(c.number);
+              onPlaceCall(c.number);
             }),
           });
         })
@@ -1078,6 +1233,299 @@
       }),
       body,
       h(Text, { variant: "dim", size: "xs" }, "Tap a contact to dial.")
+    );
+  }
+
+  /* ================================================================= DIALER */
+  // A dialpad that builds a number and places a call via callPlace().
+  var DIALPAD_KEYS = [
+    ["1", ""], ["2", "ABC"], ["3", "DEF"],
+    ["4", "GHI"], ["5", "JKL"], ["6", "MNO"],
+    ["7", "PQRS"], ["8", "TUV"], ["9", "WXYZ"],
+    ["*", ""], ["0", "+"], ["#", ""],
+  ];
+
+  function Dialer(props) {
+    var onPlaceCall = props.onPlaceCall || function (n) { callPlace(n); };
+
+    var numState = useState("");
+    var num = numState[0];
+    var setNum = numState[1];
+
+    // Default-dialer status; re-checked on each mount.
+    var defState = useState(function () {
+      return isDefaultDialer();
+    });
+    var isDefault = defState[0];
+
+    function press(d) {
+      vibrate(8);
+      setNum(function (prev) {
+        return (prev + d).slice(0, 24);
+      });
+    }
+    function backspace() {
+      vibrate(8);
+      setNum(function (prev) {
+        return prev.slice(0, prev.length - 1);
+      });
+    }
+    function place() {
+      var n = (num || "").trim();
+      if (!n) return;
+      onPlaceCall(n);
+    }
+
+    var banner = isDefault
+      ? null
+      : h(
+          Section,
+          { variant: "inset", className: "dialer-default" },
+          h(
+            Button,
+            { variant: "warning", block: true, glow: false, onClick: act(requestDefaultDialer) },
+            "SET AS DEFAULT PHONE APP"
+          )
+        );
+
+    var pad = h(
+      "div",
+      { className: "dialpad" },
+      DIALPAD_KEYS.map(function (k) {
+        return h(
+          "button",
+          {
+            type: "button",
+            key: k[0],
+            className: "dialpad__key",
+            onClick: function () {
+              press(k[0]);
+            },
+          },
+          h("span", { className: "dialpad__digit" }, k[0]),
+          k[1] ? h("span", { className: "dialpad__sub" }, k[1]) : null
+        );
+      })
+    );
+
+    return h(
+      "div",
+      { className: "stack" },
+      banner,
+      h(
+        Section,
+        { title: "DIALER" },
+        h(
+          "div",
+          { className: "dialer__display" },
+          h(Text, { as: "div", variant: "bright", size: "lg", className: "ellipsis" }, num || "—")
+        ),
+        h("div", { style: { height: 10 } }),
+        pad,
+        h("div", { style: { height: 10 } }),
+        h(
+          "div",
+          { className: "dialer__actions" },
+          h(
+            Button,
+            { variant: "primary", block: true, onClick: act(place) },
+            "CALL"
+          ),
+          h(
+            Button,
+            { variant: "ghost", glow: false, onClick: backspace },
+            "<"
+          )
+        )
+      )
+    );
+  }
+
+  /* ============================================================ IN-CALL UI */
+  // Live call timer string from a start epoch (mm:ss or h:mm:ss).
+  function callDuration(startTime) {
+    if (!startTime) return "00:00";
+    var s = Math.floor((Date.now() - Number(startTime)) / 1000);
+    if (s < 0) s = 0;
+    var hr = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    var sec = s % 60;
+    function p2(n) {
+      return (n < 10 ? "0" : "") + n;
+    }
+    if (hr > 0) return hr + ":" + p2(m) + ":" + p2(sec);
+    return p2(m) + ":" + p2(sec);
+  }
+
+  // Fixed full-screen overlay shown whenever a call is not IDLE. Re-reads call
+  // state on 'pipboy:call' and polls every 1s while active for the live timer.
+  function InCallOverlay() {
+    var stateState = useState(function () {
+      return getCallState();
+    });
+    var cs = stateState[0];
+    var setCs = stateState[1];
+
+    var keypadState = useState(false);
+    var showKeypad = keypadState[0];
+    var setShowKeypad = keypadState[1];
+
+    var refresh = useCallback(function () {
+      setCs(getCallState());
+    }, []);
+
+    useEffect(
+      function () {
+        function onCall() {
+          refresh();
+        }
+        window.addEventListener("pipboy:call", onCall);
+        return function () {
+          window.removeEventListener("pipboy:call", onCall);
+        };
+      },
+      [refresh]
+    );
+
+    var state = cs && cs.state ? cs.state : "IDLE";
+    var active = state !== "IDLE";
+
+    useEffect(
+      function () {
+        if (!active) return undefined;
+        var iv = setInterval(function () {
+          setCs(getCallState());
+        }, 1000);
+        return function () {
+          clearInterval(iv);
+        };
+      },
+      [active]
+    );
+
+    // Reset the keypad when the call ends.
+    useEffect(
+      function () {
+        if (!active && showKeypad) setShowKeypad(false);
+        return undefined;
+      },
+      [active, showKeypad]
+    );
+
+    if (!active) return null;
+
+    var who = (cs.name && cs.name.length ? cs.name : cs.number || "UNKNOWN")
+      .toString()
+      .toUpperCase();
+    var incoming = cs.incoming && state === "RINGING";
+
+    var statusLine = state;
+    if (state === "ACTIVE") statusLine = callDuration(cs.startTime);
+    else if (state === "RINGING") statusLine = incoming ? "INCOMING CALL" : "RINGING";
+
+    // Control set depends on the call phase.
+    var controls;
+    if (incoming) {
+      controls = h(
+        "div",
+        { className: "incall__answer" },
+        h(
+          Button,
+          { variant: "primary", block: true, onClick: act(callAnswer) },
+          "ANSWER"
+        ),
+        h(
+          Button,
+          { variant: "danger", block: true, glow: false, onClick: act(callReject) },
+          "REJECT"
+        )
+      );
+    } else {
+      var keypad = showKeypad
+        ? h(
+            "div",
+            { className: "dialpad incall__keypad" },
+            DIALPAD_KEYS.map(function (k) {
+              return h(
+                "button",
+                {
+                  type: "button",
+                  key: k[0],
+                  className: "dialpad__key",
+                  onClick: function () {
+                    vibrate(8);
+                    callDtmf(k[0]);
+                  },
+                },
+                h("span", { className: "dialpad__digit" }, k[0])
+              );
+            })
+          )
+        : null;
+
+      controls = h(
+        "div",
+        { className: "incall__controls" },
+        h(
+          "div",
+          { className: "incall__toggles" },
+          h(Toggle, {
+            checked: !!cs.muted,
+            label: "MUTE",
+            onChange: function (next) {
+              callMute(next);
+              refresh();
+            },
+          }),
+          h(Toggle, {
+            checked: !!cs.speaker,
+            label: "SPEAKER",
+            onChange: function (next) {
+              callSpeaker(next);
+              refresh();
+            },
+          }),
+          h(Toggle, {
+            checked: state === "HOLDING",
+            label: "HOLD",
+            onChange: function (next) {
+              callHold(next);
+              refresh();
+            },
+          }),
+          h(Toggle, {
+            checked: showKeypad,
+            label: "KEYPAD",
+            onChange: function (next) {
+              setShowKeypad(next);
+            },
+          })
+        ),
+        keypad,
+        h("div", { style: { height: 10 } }),
+        h(
+          Button,
+          { variant: "danger", block: true, glow: false, onClick: act(callHangup) },
+          "END"
+        )
+      );
+    }
+
+    return h(
+      "div",
+      { className: "incall" },
+      h(
+        Panel,
+        { title: "TRANSMISSION", className: "incall__panel" },
+        h(Heading, { level: 2, className: "incall__who ellipsis" }, who),
+        cs.number && cs.name
+          ? h(Text, { as: "div", variant: "dim", size: "sm", className: "ellipsis" }, cs.number)
+          : null,
+        h("div", { style: { height: 8 } }),
+        h(Text, { as: "div", variant: "bright", size: "lg", className: "incall__status" }, statusLine),
+        h("div", { style: { height: 16 } }),
+        controls
+      )
     );
   }
 
@@ -1470,6 +1918,7 @@
 
   function TerminalScreen(props) {
     var noBridge = props.noBridge;
+    var active = props.active;
 
     // Is the native PTY usable on this device? (false -> show a note.)
     var available = useMemo(
@@ -1482,6 +1931,39 @@
     var containerRef = useRef(null);
     // Mutable session handle held in a ref so the toolbar buttons can reach it.
     var sessRef = useRef(null);
+
+    // When TERM becomes the active tab: focus the xterm, open the soft keyboard,
+    // and re-fit. When it stops being active: drop the keyboard. The xterm
+    // instance persists across tab switches, so we reach it through sessRef.
+    useEffect(
+      function () {
+        if (!available) return undefined;
+        if (active) {
+          // Defer so the host has shown the term-host (display:flex) first.
+          var t = setTimeout(function () {
+            var s = sessRef.current;
+            if (s) {
+              try {
+                if (s.fit) s.fit.fit();
+              } catch (e) {}
+              try {
+                if (s.term) {
+                  s.term.focus();
+                  termResize(s.term.cols, s.term.rows);
+                }
+              } catch (e) {}
+            }
+            showKeyboard();
+          }, 60);
+          return function () {
+            clearTimeout(t);
+          };
+        }
+        hideKeyboard();
+        return undefined;
+      },
+      [active, available]
+    );
 
     // Send a literal command line into the shell (quick chips).
     function sendInput(str) {
@@ -1985,7 +2467,11 @@
       lsSetRaw(TAB_KEY, t);
     }, []);
 
-    var dataTabState = useState("calls");
+    var dataTabState = useState("dialer");
+
+    // Bumped on each incoming 'pipboy:sms' so the SMS view / open thread reload.
+    var smsNonceState = useState(0);
+    var smsNonce = smsNonceState[0], setSmsNonce = smsNonceState[1];
 
     var statsState = useState(null);
     var appsState = useState([]);
@@ -2104,13 +2590,27 @@
       });
     }, []);
 
+    // Refresh just the SMS list (used on incoming-SMS events).
+    var refreshSms = useCallback(function () {
+      setSms(getPermissions().sms ? getSms(80) : []);
+    }, []);
+
     useEffect(
       function () {
         refreshAll();
         function onRefresh() {
           refreshAll();
         }
+        // Incoming SMS -> refresh the list and bump the nonce so any open thread
+        // (and the default-app banner) re-reads itself.
+        function onSms() {
+          refreshSms();
+          setSmsNonce(function (n) {
+            return n + 1;
+          });
+        }
         window.addEventListener("pipboy:refresh", onRefresh);
+        window.addEventListener("pipboy:sms", onSms);
         var ivStats = setInterval(refreshStats, 10000);
         var ivClock = setInterval(function () {
           setClock(clockNow());
@@ -2118,13 +2618,20 @@
         var ivTraffic = setInterval(tickTraffic, 2000);
         return function () {
           window.removeEventListener("pipboy:refresh", onRefresh);
+          window.removeEventListener("pipboy:sms", onSms);
           clearInterval(ivStats);
           clearInterval(ivClock);
           clearInterval(ivTraffic);
         };
       },
-      [refreshAll, refreshStats, tickTraffic]
+      [refreshAll, refreshStats, tickTraffic, refreshSms]
     );
+
+    // Place a call: prefer in-app callPlace (default-dialer), fall back to dial.
+    var placeCall = useCallback(function (number) {
+      if (!number) return;
+      if (!callPlace(number)) dial(number);
+    }, []);
 
     // When switching into STAT, fetch the heavier network/audio/display data.
     useEffect(
@@ -2194,6 +2701,8 @@
         dataTab: dataTabState[0],
         setDataTab: dataTabState[1],
         onDismiss: dismissAndRefresh,
+        onPlaceCall: placeCall,
+        smsNonce: smsNonce,
       });
     } else if (tab === "term") {
       // TERM is rendered by a PERSISTENT host below (kept mounted so the
@@ -2353,11 +2862,12 @@
               className: "term-host",
               style: { display: tab === "term" ? "flex" : "none" },
             },
-            h(TerminalScreen, { noBridge: !hasBridge() })
+            h(TerminalScreen, { noBridge: !hasBridge(), active: tab === "term" })
           )
         )
       ),
       h(NotifPopups, { onOpen: openNotification }),
+      h(InCallOverlay, null),
       modal
     );
   }

@@ -52,6 +52,7 @@
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
             android:clearTaskOnLaunch="true"
+            android:excludeFromRecents="true"
             android:resizeableActivity="true"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|density|uiMode"
             android:screenOrientation="fullUser"
