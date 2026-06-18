@@ -10,6 +10,9 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
+import com.pipboy3000.launcher.telephony.call.CallStore
+import com.pipboy3000.launcher.telephony.sms.SmsFeature
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -109,10 +112,16 @@ class MainActivity : ComponentActivity() {
             LauncherBridge(
                 this,
                 { requestCorePermissions() },
-                { js -> runOnUiThread { if (::webView.isInitialized) webView.evaluateJavascript(js, null) } },
+                { js -> evalJsOnUi(js) },
+                { show -> runOnUiThread { setSoftKeyboard(show) } },
             ),
             "AndroidBridge",
         )
+
+        // Push native telephony events (incoming SMS, call state) to the web UI.
+        val emit: (String) -> Unit = { js -> evalJsOnUi(js) }
+        SmsFeature.emitter = emit
+        CallStore.emitter = emit
 
         webView.loadUrl(indexUrl)
 
@@ -221,6 +230,26 @@ class MainActivity : ComponentActivity() {
         super.onWindowFocusChanged(hasFocus)
         // The system can restore the status bar after dialogs/permission prompts; re-hide.
         if (hasFocus) applyImmersive()
+    }
+
+    /** Evaluate a JS snippet on the WebView from any thread. */
+    private fun evalJsOnUi(js: String) {
+        runOnUiThread { if (::webView.isInitialized) webView.evaluateJavascript(js, null) }
+    }
+
+    /** Show/hide the soft keyboard for the WebView (terminal focus). */
+    private fun setSoftKeyboard(show: Boolean) {
+        try {
+            val imm = getSystemService(InputMethodManager::class.java) ?: return
+            if (show) {
+                webView.requestFocus()
+                imm.showSoftInput(webView, InputMethodManager.SHOW_IMPLICIT)
+            } else {
+                imm.hideSoftInputFromWindow(webView.windowToken, 0)
+            }
+        } catch (e: Exception) {
+            // best-effort
+        }
     }
 
     /** Passed to LauncherBridge; the web UI calls this via AndroidBridge.requestPermissions(). */

@@ -58,6 +58,8 @@ class LauncherBridge(
     private val requestPermissions: () -> Unit,
     /** Runs JS on the WebView (UI thread). Used to stream terminal output. */
     private val emitJs: (String) -> Unit = {},
+    /** Show/hide the soft keyboard for the WebView (true=show). */
+    private val keyboard: (Boolean) -> Unit = {},
 ) {
 
     /** Live xterm.js-backed shell session for the TERM tab (lazily created). */
@@ -564,6 +566,83 @@ class LauncherBridge(
             terminal = null
         } catch (e: Exception) { }
     }
+
+    // ---------------------------------------------------------------------
+    // Soft keyboard (terminal focus etc.)
+    // ---------------------------------------------------------------------
+
+    @JavascriptInterface
+    fun showKeyboard() { try { keyboard(true) } catch (e: Exception) {} }
+
+    @JavascriptInterface
+    fun hideKeyboard() { try { keyboard(false) } catch (e: Exception) {} }
+
+    // ---------------------------------------------------------------------
+    // Default SMS app
+    // ---------------------------------------------------------------------
+
+    @JavascriptInterface
+    fun isDefaultSmsApp(): Boolean =
+        try { com.pipboy3000.launcher.telephony.sms.SmsFeature.isDefaultSmsApp(activity) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun sendSms(address: String, body: String): Boolean =
+        try { com.pipboy3000.launcher.telephony.sms.SmsFeature.sendSms(activity, address, body) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun requestDefaultSmsApp() {
+        try {
+            val i = com.pipboy3000.launcher.telephony.sms.SmsFeature.requestDefaultIntent(activity) ?: return
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(i)
+        } catch (e: Exception) {}
+    }
+
+    // ---------------------------------------------------------------------
+    // Default phone app + in-call control
+    // ---------------------------------------------------------------------
+
+    @JavascriptInterface
+    fun isDefaultDialer(): Boolean =
+        try { com.pipboy3000.launcher.telephony.call.CallFeature.isDefaultDialer(activity) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun requestDefaultDialer() {
+        try {
+            val i = com.pipboy3000.launcher.telephony.call.CallFeature.requestDefaultDialerIntent(activity) ?: return
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(i)
+        } catch (e: Exception) {}
+    }
+
+    @JavascriptInterface
+    fun callPlace(number: String): Boolean =
+        try { com.pipboy3000.launcher.telephony.call.CallFeature.placeCall(activity, number) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun getCallState(): String =
+        try { com.pipboy3000.launcher.telephony.call.CallStore.snapshotJson() } catch (e: Exception) { "{\"state\":\"IDLE\"}" }
+
+    @JavascriptInterface
+    fun callAnswer(): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.answer() } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun callHangup(): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.hangup() } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun callReject(): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.reject() } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun callMute(on: Boolean): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.setMuted(on) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun callSpeaker(on: Boolean): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.setSpeaker(on) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun callHold(on: Boolean): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.setHold(on) } catch (e: Exception) { false }
+
+    @JavascriptInterface
+    fun callDtmf(digit: String): Boolean = try { com.pipboy3000.launcher.telephony.call.CallStore.sendDtmf(digit) } catch (e: Exception) { false }
 
     /** Read a stream into [sink] up to [maxBytes] characters. */
     private fun drain(stream: java.io.InputStream, sink: StringBuilder, maxBytes: Int) {
