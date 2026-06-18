@@ -101,6 +101,9 @@
   function getSms(limit) {
     return callJson("getSms", [limit], []);
   }
+  function getSmsThread(threadId, limit) {
+    return callJson("getSmsThread", [String(threadId), limit], []);
+  }
   function getTraffic() {
     return callJson("getTraffic", [], null);
   }
@@ -344,19 +347,19 @@
   function byCallType(type) {
     switch (type) {
       case "INCOMING":
-        return { marker: "▼", tone: "default" };
+        return { marker: "<", tone: "default" };
       case "OUTGOING":
-        return { marker: "▲", tone: "default" };
+        return { marker: ">", tone: "default" };
       case "MISSED":
-        return { marker: "✕", tone: "danger" };
+        return { marker: "x", tone: "danger" };
       case "REJECTED":
-        return { marker: "✕", tone: "danger" };
+        return { marker: "x", tone: "danger" };
       case "BLOCKED":
-        return { marker: "⊘", tone: "danger" };
+        return { marker: "#", tone: "danger" };
       case "VOICEMAIL":
-        return { marker: "☎", tone: "warning" };
+        return { marker: "@", tone: "warning" };
       default:
-        return { marker: "·", tone: "default" };
+        return { marker: "-", tone: "default" };
     }
   }
 
@@ -366,13 +369,13 @@
       case "SENT":
       case "OUTBOX":
       case "QUEUED":
-        return "▴";
+        return ">";
       case "FAILED":
-        return "✕";
+        return "x";
       case "DRAFT":
-        return "✎";
+        return "~";
       default:
-        return "▾"; // INBOX / UNKNOWN
+        return "<"; // INBOX / UNKNOWN
     }
   }
 
@@ -391,8 +394,8 @@
   function signalBars(level) {
     // level 0..4, -1 unknown
     if (level == null || level < 0) return "----";
-    var full = "▮";
-    var empty = "▯";
+    var full = "#";
+    var empty = "-";
     var n = Math.max(0, Math.min(4, level));
     return full.repeat(n) + empty.repeat(4 - n);
   }
@@ -651,8 +654,8 @@
 
     function appRow(a) {
       var marks = "";
-      if (favSet[a.packageName]) marks += " ★";
-      if (hiddenSet[a.packageName]) marks += " ⊘";
+      if (favSet[a.packageName]) marks += " *";
+      if (hiddenSet[a.packageName]) marks += " #";
       var pressHandlers = {
         onPointerDown: function () {
           lp.onStart(a.packageName);
@@ -663,7 +666,7 @@
       };
       return h(ListRow, {
         key: a.packageName,
-        marker: "▸",
+        marker: ">",
         primary: appLabelOf(a) + marks,
         onClick: act(function () {
           if (lp.didFire()) return;
@@ -695,7 +698,7 @@
             freqApps.map(function (a) {
               return h(ListRow, {
                 key: a.packageName,
-                marker: "▸",
+                marker: ">",
                 primary: (a.label || a.packageName).toUpperCase(),
                 onClick: act(function () {
                   onLaunch(a.packageName);
@@ -722,7 +725,7 @@
         actions.push(
           h(ListRow, {
             key: "__dial",
-            marker: "☎",
+            marker: ">",
             primary: "DIAL " + q,
             onClick: act(function () {
               dial(q);
@@ -733,7 +736,7 @@
       actions.push(
         h(ListRow, {
           key: "__web",
-          marker: "⌕",
+          marker: ">",
           primary: 'WEB SEARCH "' + q + '"',
           onClick: act(function () {
             webSearch(q);
@@ -839,8 +842,27 @@
     );
   }
 
+  // SMS — an in-app two-level reader: a conversation LIST (one row per thread)
+  // and a read-only THREAD view (all messages of the selected thread). No
+  // external messaging app is launched.
   function Sms(props) {
     var messages = props.messages || [];
+
+    // Selected thread state: { threadId, title } or null for the LIST view.
+    var openState = useState(null);
+    var open = openState[0];
+    var setOpen = openState[1];
+
+    if (open) {
+      return h(SmsThread, {
+        threadId: open.threadId,
+        title: open.title,
+        onBack: function () {
+          setOpen(null);
+        },
+      });
+    }
+
     if (messages.length === 0) {
       return h(Section, { variant: "inset" }, h(Text, { variant: "dim" }, "NO MESSAGES."));
     }
@@ -850,21 +872,77 @@
       messages.map(function (m, i) {
         var who = (m.name && m.name.length ? m.name : m.address || "UNKNOWN").toString().toUpperCase();
         var unread = m.read === false && m.type === "INBOX";
-        var marker = (unread ? "• " : "") + smsMarker(m.type);
+        var marker = (unread ? "* " : "") + smsMarker(m.type);
         var tone = m.type === "FAILED" ? "danger" : "default";
-        var primary = unread ? who + " ●" : who;
+        var primary = unread ? who + " *" : who;
         return h(ListRow, {
-          key: m.address ? m.address + ":" + m.date + ":" + i : i,
+          key: m.threadId != null ? "t" + m.threadId : (m.address ? m.address + ":" + m.date + ":" + i : i),
           marker: marker,
           tone: tone,
           primary: primary,
           secondary: (m.body || "").toString().replace(/\s+/g, " "),
           meta: relativeTime(m.date),
           onClick: act(function () {
-            openSms(m.address);
+            setOpen({ threadId: m.threadId, title: who });
           }),
         });
       })
+    );
+  }
+
+  // SmsThread — read-only conversation view. Loads all messages of a thread
+  // (oldest first) and renders them as left/right aligned bubbles inside the
+  // scrollable body. A BACK button returns to the conversation LIST.
+  function SmsThread(props) {
+    var threadId = props.threadId;
+    var title = props.title || "UNKNOWN";
+    var onBack = props.onBack;
+
+    var listState = useState([]);
+    var list = listState[0];
+    var setList = listState[1];
+
+    useEffect(
+      function () {
+        if (threadId == null) {
+          setList([]);
+          return undefined;
+        }
+        setList(getSmsThread(String(threadId), 500) || []);
+        return undefined;
+      },
+      [threadId]
+    );
+
+    var header = h(
+      "div",
+      { className: "sms-thread__head" },
+      h(Button, { variant: "ghost", glow: false, onClick: act(onBack) }, "< BACK"),
+      h(Text, { as: "span", variant: "bright", size: "sm", className: "ellipsis" }, title)
+    );
+
+    var bodyChildren;
+    if (!list || list.length === 0) {
+      bodyChildren = h(Text, { variant: "dim" }, "NO MESSAGES.");
+    } else {
+      bodyChildren = list.map(function (m, i) {
+        var out = m.type === "SENT" || m.type === "OUTBOX" || m.type === "QUEUED";
+        var cls = "sms-msg " + (out ? "sms-msg--out" : "sms-msg--in");
+        return h(
+          "div",
+          { className: cls, key: i },
+          h(Text, { as: "div", variant: out ? "bright" : "dim", size: "sm" }, (m.body || "").toString()),
+          h(Text, { as: "div", variant: "dim", size: "xs", className: "sms-msg__time" }, relativeTime(m.date))
+        );
+      });
+    }
+
+    return h(
+      Section,
+      { variant: "inset" },
+      header,
+      h("div", { style: { height: 10 } }),
+      h("div", { className: "sms-thread" }, bodyChildren)
     );
   }
 
@@ -891,7 +969,7 @@
         var who = (n.appLabel || n.packageName || "").toString().toUpperCase();
         var action = n.clearable
           ? {
-              label: "✕",
+              label: "X",
               variant: "danger",
               onClick: act(function () {
                 onDismiss(n.key);
@@ -900,7 +978,7 @@
           : null;
         return h(ListRow, {
           key: n.key || i,
-          marker: "●",
+          marker: "*",
           primary: n.title ? who + " · " + n.title : who,
           secondary: n.text || "",
           meta: n.time ? relativeTime(n.time) : "",
@@ -976,7 +1054,7 @@
           var named = c.name && c.name.length;
           return h(ListRow, {
             key: i,
-            marker: "▸",
+            marker: ">",
             primary: (c.name || c.number || "UNKNOWN").toUpperCase(),
             secondary: named ? c.number || "" : "",
             onClick: act(function () {
@@ -1026,7 +1104,7 @@
 
     var vitalsExtra = [];
     if (stats.batteryTemp != null)
-      vitalsExtra.push("TEMP " + Math.round(Number(stats.batteryTemp)) + "°C");
+      vitalsExtra.push("TEMP " + Math.round(Number(stats.batteryTemp)) + "C");
     if (stats.batteryHealth) vitalsExtra.push("HEALTH " + stats.batteryHealth);
     if (stats.batteryVoltage != null)
       vitalsExtra.push((Number(stats.batteryVoltage) / 1000).toFixed(2) + "V");
@@ -1182,7 +1260,7 @@
           )
         ),
         on
-          ? h(Text, { as: "span", variant: "body", size: "sm" }, "✓")
+          ? h(Text, { as: "span", variant: "body", size: "sm" }, "ON")
           : h(
               "div",
               { className: "access-row__btn" },
@@ -1812,7 +1890,7 @@
                     remove(p.key);
                   }),
                 },
-                "✕"
+                "X"
               )
             )
           )

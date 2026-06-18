@@ -190,6 +190,32 @@ html, body, #root {
   white-space: nowrap;
 }
 
+/* SMS in-app reader: thread header + conversation bubbles. Colours come from
+   Text variants/tokens; these rules are layout only. */
+.sms-thread__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sms-thread__head .ellipsis {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sms-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sms-msg {
+  max-width: 80%;
+  padding: 6px 8px;
+}
+.sms-msg--in { align-self: flex-start; }
+.sms-msg--out { align-self: flex-end; text-align: right; }
+/* Preserve message line breaks and wrap long words. */
+.sms-msg > * { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.sms-msg__time { margin-top: 2px; }
+
 /* Responsive grid for shortcut buttons (RADIO) and any shortcut grids.
    auto-fit + minmax keeps ~3 columns on phones and grows to more on tablets,
    collapsing to fewer on very narrow screens — never overflowing horizontally. */
